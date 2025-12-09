@@ -1,35 +1,41 @@
-
 import { GoogleGenAI } from "@google/genai";
+import { DEFAULT_GOOGLE_CONFIG } from "../constants";
 
 export const generateImageWithGoogle = async (
   prompt: string, 
-  // apiKey removed, using process.env.API_KEY
   model: string = 'gemini-3-pro-image-preview',
   baseUrl?: string
 ): Promise<string> => {
   
-  const apiKey = process.env.API_KEY;
+  // Logic: 
+  // 1. Try process.env.API_KEY (injected by AI Studio)
+  // 2. Fallback to DEFAULT_GOOGLE_CONFIG.apiKey (hardcoded in constants for Cloud Run)
+  let apiKey = process.env.API_KEY;
+  if (!apiKey || apiKey.trim() === '') {
+    apiKey = DEFAULT_GOOGLE_CONFIG?.apiKey;
+  }
+
   if (!apiKey) {
-    throw new Error("API Key not found in environment. Please connect your Google Account.");
+    throw new Error("API Key not found. Please connect Google Account or configure DEFAULT_GOOGLE_CONFIG.");
   }
 
   // Configure client with optional Base URL
   const clientConfig: any = { apiKey };
-  if (baseUrl) {
-    // Remove trailing slash if present
-    clientConfig.baseUrl = baseUrl.replace(/\/$/, '');
+  
+  // Use passed baseUrl, or fallback to default config baseUrl if exists, otherwise standard Google
+  const finalBaseUrl = baseUrl || DEFAULT_GOOGLE_CONFIG?.baseUrl;
+  if (finalBaseUrl) {
+    clientConfig.baseUrl = finalBaseUrl.replace(/\/$/, '');
   }
 
   const ai = new GoogleGenAI(clientConfig);
   
-  // Use the exact model name provided by the user. 
   const targetModel = model;
 
   console.log(`[GoogleService] Generating with model: ${targetModel}`);
-  console.log(`[GoogleService] BaseURL: ${baseUrl || '(Default Google)'}`);
   
   try {
-    // CASE 1: Imagen Models (e.g., imagen-3.0-generate-001)
+    // CASE 1: Imagen Models
     if (targetModel.startsWith('imagen')) {
       const response = await ai.models.generateImages({
         model: targetModel,
@@ -48,7 +54,7 @@ export const generateImageWithGoogle = async (
       throw new Error("Imagen 模型未返回有效的图片数据");
     }
 
-    // CASE 2: Gemini Models (e.g., gemini-3-pro-image-preview, gemini-2.5-flash-image)
+    // CASE 2: Gemini Models
     else {
       const requestParams: any = {
         model: targetModel,
@@ -59,7 +65,6 @@ export const generateImageWithGoogle = async (
         }
       };
 
-      // Configuration specific to Gemini 3/Pro Image families
       if (targetModel.includes('gemini-3') || targetModel.includes('pro-image')) {
         requestParams.config = {
           imageConfig: {
@@ -71,7 +76,6 @@ export const generateImageWithGoogle = async (
 
       const response = await ai.models.generateContent(requestParams);
 
-      // Parse response for image data
       if (response.candidates && response.candidates[0].content && response.candidates[0].content.parts) {
         for (const part of response.candidates[0].content.parts) {
           if (part.inlineData && part.inlineData.data) {
@@ -88,11 +92,11 @@ export const generateImageWithGoogle = async (
     console.error("Google Image Generation Error:", error);
     
     if (error.message && (error.message.includes("403") || error.message.includes("PERMISSION_DENIED"))) {
-        throw new Error(`权限不足 (403)。当前 Key 无法访问模型 "${targetModel}"。\n如果您使用中转服务，请检查 Base URL 是否正确。`);
+        throw new Error(`权限不足 (403)。当前 Key 无法访问模型 "${targetModel}"。`);
     }
 
     if (error.message && error.message.includes("404")) {
-        throw new Error(`模型未找到 (404)。服务端找不到模型 "${targetModel}"。\n1. 请检查模型名称是否与中转站支持的完全一致。\n2. 检查 Base URL 设置。`);
+        throw new Error(`模型未找到 (404)。服务端找不到模型 "${targetModel}"。请检查 Base URL。`);
     }
 
     throw new Error(error.message || "生成图片失败");

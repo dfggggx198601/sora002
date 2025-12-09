@@ -6,6 +6,12 @@ export const DEFAULT_CUSTOM_CONFIG: CustomApiConfig = {
   endpointPath: "/chat/completions"
 };
 
+// Cloud Run Fallback Configuration
+export const DEFAULT_GOOGLE_CONFIG = {
+  apiKey: "AlzaSyDRdEV1tFZCYtTZ2nMj435TzsNycjJ2PCc", // 您的 Google API Key
+  baseUrl: "" // 默认为空，使用 Google 官方地址。如有需要可填 https://proxy...
+};
+
 export const MOCK_IMAGES = [
   "https://picsum.photos/400/300",
   "https://picsum.photos/400/301",
