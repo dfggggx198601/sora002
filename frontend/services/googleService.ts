@@ -2,26 +2,28 @@ import { GoogleGenAI } from "@google/genai";
 import { DEFAULT_GOOGLE_CONFIG } from "../constants";
 
 export const generateImageWithGoogle = async (
-  prompt: string, 
+  prompt: string,
   model: string = 'gemini-3-pro-image-preview',
-  baseUrl?: string
+  baseUrl?: string,
+  apiKey?: string
 ): Promise<string> => {
-  
+
   // Logic: 
-  // 1. Try process.env.API_KEY (injected by AI Studio)
-  // 2. Fallback to DEFAULT_GOOGLE_CONFIG.apiKey (hardcoded in constants for Cloud Run)
-  let apiKey = process.env.API_KEY;
-  if (!apiKey || apiKey.trim() === '') {
-    apiKey = DEFAULT_GOOGLE_CONFIG?.apiKey;
+  // 1. Prefer passed apiKey (from user settings)
+  // 2. Fallback to process.env.API_KEY (AI Studio)
+  // 3. Fallback to DEFAULT_GOOGLE_CONFIG.apiKey
+  let finalApiKey = apiKey;
+  if (!finalApiKey || finalApiKey.trim() === '') {
+    finalApiKey = process.env.API_KEY || DEFAULT_GOOGLE_CONFIG?.apiKey;
   }
 
-  if (!apiKey) {
-    throw new Error("API Key not found. Please connect Google Account or configure DEFAULT_GOOGLE_CONFIG.");
+  if (!finalApiKey) {
+    throw new Error("API Key not found. Please enter your Google API Key in Settings.");
   }
 
   // Configure client with optional Base URL
-  const clientConfig: any = { apiKey };
-  
+  const clientConfig: any = { apiKey: finalApiKey };
+
   // Use passed baseUrl, or fallback to default config baseUrl if exists, otherwise standard Google
   const finalBaseUrl = baseUrl || DEFAULT_GOOGLE_CONFIG?.baseUrl;
   if (finalBaseUrl) {
@@ -29,11 +31,11 @@ export const generateImageWithGoogle = async (
   }
 
   const ai = new GoogleGenAI(clientConfig);
-  
+
   const targetModel = model;
 
   console.log(`[GoogleService] Generating with model: ${targetModel}`);
-  
+
   try {
     // CASE 1: Imagen Models
     if (targetModel.startsWith('imagen')) {
@@ -90,13 +92,13 @@ export const generateImageWithGoogle = async (
 
   } catch (error: any) {
     console.error("Google Image Generation Error:", error);
-    
+
     if (error.message && (error.message.includes("403") || error.message.includes("PERMISSION_DENIED"))) {
-        throw new Error(`权限不足 (403)。当前 Key 无法访问模型 "${targetModel}"。`);
+      throw new Error(`权限不足 (403)。当前 Key 无法访问模型 "${targetModel}"。`);
     }
 
     if (error.message && error.message.includes("404")) {
-        throw new Error(`模型未找到 (404)。服务端找不到模型 "${targetModel}"。请检查 Base URL。`);
+      throw new Error(`模型未找到 (404)。服务端找不到模型 "${targetModel}"。请检查 Base URL。`);
     }
 
     throw new Error(error.message || "生成图片失败");

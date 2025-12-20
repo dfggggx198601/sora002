@@ -1,38 +1,37 @@
+# Dockerfile for backend service
+
 # 第一阶段：构建环境
 FROM node:20-alpine as builder
 
 # 设置工作目录
 WORKDIR /app
 
-# 复制依赖文件并安装
-COPY package*.json ./
+# 复制后端依赖文件并安装
+COPY backend/package*.json ./
 RUN npm install
 
-# 复制所有源代码
-COPY . .
+# 复制后端源代码
+COPY backend/ .
 
-# 执行构建 (默认生成到 /dist 目录)
+# 编译 TypeScript
 RUN npm run build
 
 # 第二阶段：运行环境
 FROM node:20-alpine
 
-# 安装轻量级静态文件服务工具 'serve'
-RUN npm install -g serve
-
 # 设置工作目录
 WORKDIR /app
 
-# 从第一阶段复制构建产物到当前目录
-COPY --from=builder /app/dist .
+# 从第一阶段复制编译后的代码和依赖
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
 
 # Cloud Run 默认提供 PORT 环境变量 (默认为 8080)
-ENV PORT=8080
+ENV PORT=3001
 
 # 暴露端口
-EXPOSE 8080
+EXPOSE 3001
 
 # 启动服务
-# -s: 单页应用模式 (Single Page Application)，确保刷新不 404
-# -l: 监听指定端口
-CMD ["sh", "-c", "serve -s . -l $PORT"]
+CMD ["node", "dist/server.js"]

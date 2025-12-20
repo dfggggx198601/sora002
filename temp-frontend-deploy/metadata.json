@@ -1,0 +1,5 @@
+{
+  "name": "GenVideo Studio",
+  "description": "A professional frontend for AI video generation. Features a dual-engine architecture: built-in support for Google's state-of-the-art Veo model (Text-to-Video & Image-to-Video) and a configurable connector for custom deployments like Sora2API.",
+  "requestFramePermissions": []
+}
