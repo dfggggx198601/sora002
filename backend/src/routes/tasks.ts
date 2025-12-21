@@ -4,6 +4,7 @@ import {
   createTask,
   updateTask,
   deleteTask,
+  clearTasks,
   syncTasks,
   getQuota,
 } from '../controllers/taskController';
@@ -16,6 +17,7 @@ router.use(authMiddleware);
 
 router.get('/', getTasks);
 router.post('/', createTask);
+router.delete('/', clearTasks);
 router.put('/:taskId', updateTask);
 router.delete('/:taskId', deleteTask);
 router.post('/sync', syncTasks);

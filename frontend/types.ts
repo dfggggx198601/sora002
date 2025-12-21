@@ -38,3 +38,20 @@ export interface CustomApiConfig {
 export interface AppSettings extends CustomApiConfig {
   googleApiKey?: string;
 }
+export interface QuotaStats {
+  videoCount: number;
+  videoLimit: number;
+  imageCount: number;
+  imageLimit: number;
+  dailyVideoLimit: number;
+  dailyImageLimit: number;
+  lastReset: string | number | Date;
+}
+
+export interface UserProfile {
+  id: string;
+  username: string;
+  email: string;
+  role: string;
+  quota: QuotaStats;
+}

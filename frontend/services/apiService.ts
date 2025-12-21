@@ -42,6 +42,15 @@ class ApiService {
     };
 
     const response = await fetch(url, config);
+
+    // 处理 401 (Unauthorized) 错误
+    if (response.status === 401) {
+      this.clearToken();
+      // 如果不是在尝试登录或注册时发生的，则可能需要刷新页面或提示重连
+      console.warn('Session expired or invalid token. Clearing credentials.');
+      throw new Error('鉴权失效，请重新登录');
+    }
+
     const data = await response.json();
 
     if (!response.ok) {
@@ -57,11 +66,11 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ email, password, username }),
     });
-    
+
     if (data.token) {
       this.setToken(data.token);
     }
-    
+
     return data;
   }
 
@@ -70,11 +79,11 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    
+
     if (data.token) {
       this.setToken(data.token);
     }
-    
+
     return data;
   }
 
@@ -103,6 +112,12 @@ class ApiService {
 
   async deleteTask(taskId: string) {
     return this.request(`/tasks/${taskId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async clearTasks() {
+    return this.request('/tasks', {
       method: 'DELETE',
     });
   }

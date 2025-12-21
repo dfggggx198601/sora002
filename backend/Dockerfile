@@ -27,10 +27,10 @@ COPY --from=builder /app/dist ./dist
 
 # 设置环境变量
 ENV NODE_ENV=production
-ENV PORT=3001
+ENV PORT=8080
 
 # 暴露端口
-EXPOSE 3001
+EXPOSE 8080
 
 # 启动服务
 CMD ["node", "dist/server.js"]

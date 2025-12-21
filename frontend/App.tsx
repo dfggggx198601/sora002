@@ -4,7 +4,9 @@ import {
   GenerationConfig,
   GenerationTask,
   GenerationStatus,
-  AppSettings
+  AppSettings,
+  UserProfile,
+  QuotaStats
 } from './types';
 import { DEFAULT_CUSTOM_CONFIG } from './constants';
 import { generateWithCustomApi } from './services/customService';
@@ -15,21 +17,21 @@ import { queueService } from './services/queueService';
 import { quotaService } from './services/quotaService';
 import { apiService } from './services/apiService';
 import AuthModal from './components/AuthModal';
-import { SparklesIcon, UploadIcon, VideoIcon, HistoryIcon, PlayIcon, SettingsIcon, ImageIcon } from './components/Icons';
+import { SparklesIcon, UploadIcon, VideoIcon, HistoryIcon, PlayIcon, SettingsIcon, ImageIcon, TrashIcon } from './components/Icons';
 
 const App = () => {
   // --- State ---
   // 配置状态
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [googleBaseUrl, setGoogleBaseUrl] = useState<string>('');
-  const [apiKey, setApiKey] = useState<string>(''); // New: Local API Key
+  const [apiKey, setApiKey] = useState<string>(import.meta.env.VITE_GOOGLE_API_KEY || ''); // New: Load from Env
   const [showConfig, setShowConfig] = useState(false);
   const [activeTab, setActiveTab] = useState<'video' | 'image'>('video');
 
   // 认证状态
   const [isAuthenticated, setIsAuthenticated] = useState(apiService.isAuthenticated());
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   // 视频生成 - 输入区域状态
   const [prompt, setPrompt] = useState('');
@@ -44,15 +46,19 @@ const App = () => {
   // 独立图片生成 - 输入区域状态
   const [standaloneImagePrompt, setStandaloneImagePrompt] = useState('');
   // 新增：图片生成模型选择
+  // 新增：图片生成模型选择
   const [selectedImageModel, setSelectedImageModel] = useState<string>('gemini-3-pro-image-preview');
 
   // 任务管理状态
   const [tasks, setTasks] = useState<GenerationTask[]>([]);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [queueLength, setQueueLength] = useState(0);
-  const [quotaStats, setQuotaStats] = useState(quotaService.getUsageStats());
+  const [quotaStats, setQuotaStats] = useState<QuotaStats>(quotaService.getUsageStats());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 初始化 BroadcastChannel 用于跨标签页同步
+  const taskChannel = React.useMemo(() => new BroadcastChannel('sora-tasks-sync'), []);
 
   // 初始化：从 IndexedDB 加载历史任务
   useEffect(() => {
@@ -60,20 +66,33 @@ const App = () => {
       try {
         const loadedTasks = await dbService.loadTasks();
         setTasks(loadedTasks);
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load tasks from IndexedDB:', error);
       }
     };
     loadTasks();
-    
+
     // 检查用户认证状态并同步任务
     checkUserProfile();
-  }, []);
+
+    // 监听其他标签页的消息
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'TASKS_UPDATED') {
+        loadTasks(); // 重新加载任务列表
+      }
+    };
+    taskChannel.addEventListener('message', handleMessage);
+
+    return () => {
+      taskChannel.removeEventListener('message', handleMessage);
+      // taskChannel.close(); // Don't close here as it's memoized and shared
+    };
+  }, [taskChannel]);
 
   // 监听任务变化，自动保存到 IndexedDB
   useEffect(() => {
     if (tasks.length > 0) {
-      dbService.saveTasks(tasks).catch(error => {
+      dbService.saveTasks(tasks).catch((error: any) => {
         console.error('Failed to save tasks to IndexedDB:', error);
       });
     }
@@ -112,7 +131,9 @@ const App = () => {
     const savedKey = localStorage.getItem('google_api_key');
     if (savedKey) {
       setApiKey(savedKey);
-      setIsGoogleConnected(true); // Treat as connected if local key exists
+      setIsGoogleConnected(true);
+    } else if (import.meta.env.VITE_GOOGLE_API_KEY) {
+      setIsGoogleConnected(true);
     }
   }, []);
 
@@ -124,17 +145,17 @@ const App = () => {
         const profile = await apiService.getProfile();
         setUserProfile(profile.user);
         setIsAuthenticated(true);
-        
+
         // 同步服务器任务到本地
         try {
           const serverTasks = await apiService.getTasks();
           setTasks(serverTasks.tasks);
           // 保存到本地 IndexedDB
           await dbService.saveTasks(serverTasks.tasks);
-        } catch (syncError) {
+        } catch (syncError: any) {
           console.error('Failed to sync tasks from server:', syncError);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to get user profile:', error);
         apiService.clearToken();
         setIsAuthenticated(false);
@@ -149,7 +170,8 @@ const App = () => {
       // Assume success after dialog interaction to avoid race condition
       setIsGoogleConnected(true);
     } else {
-      alert("AI Studio 环境未检测到。请确保在 Google AI Studio/IDX 环境中运行。");
+      // AI Studio 环境未检测到，打开配置面板允许用户手动输入 Key
+      setShowConfig(true);
     }
   };
 
@@ -173,7 +195,7 @@ const App = () => {
   };
 
   // 获取当前正在查看的任务对象
-  const activeTask = tasks.find(t => t.id === activeTaskId) || null;
+  const activeTask = tasks.find((t: GenerationTask) => t.id === activeTaskId) || null;
 
   // --- Handlers ---
 
@@ -187,14 +209,14 @@ const App = () => {
   const handleAuthSuccess = async () => {
     setIsAuthenticated(true);
     await checkUserProfile();
-    
+
     // 登录成功后也同步一次任务
     try {
       const serverTasks = await apiService.getTasks();
       setTasks(serverTasks.tasks);
       // 保存到本地 IndexedDB
       await dbService.saveTasks(serverTasks.tasks);
-    } catch (syncError) {
+    } catch (syncError: any) {
       console.error('Failed to sync tasks after login:', syncError);
     }
   };
@@ -281,7 +303,7 @@ const App = () => {
     }
 
     // 1. 创建新任务
-    const newTask: GenerationTask = {
+    let newTask: GenerationTask = {
       id: Date.now().toString(),
       type: 'IMAGE',
       status: GenerationStatus.GENERATING,
@@ -290,13 +312,31 @@ const App = () => {
       createdAt: Date.now(),
     };
 
-    setTasks(prev => [newTask, ...prev]);
+    // 如果已登录，先在后端创建任务以获取 ID 和扣除配额
+    if (isAuthenticated) {
+      try {
+        const res = await apiService.createTask({
+          type: 'IMAGE',
+          prompt: standaloneImagePrompt,
+          model: finalModel
+        });
+        // 使用服务器返回的任务 ID (替换本地 ID)
+        newTask.id = res.task.id || res.task._id; // Adapt to whatever ID field backend uses
+        // 更新本地配额统计 (后端已更新)
+        if (res.quota) setQuotaStats(res.quota);
+      } catch (error: any) {
+        alert(`创建任务失败: ${error.message}`);
+        return;
+      }
+    } else {
+      // 未登录：仅本地配额扣除
+      quotaService.incrementUsage('IMAGE');
+      setQuotaStats(quotaService.getUsageStats());
+    }
+
+    setTasks((prev: GenerationTask[]) => [newTask, ...prev]);
     setActiveTaskId(newTask.id);
     setStandaloneImagePrompt('');
-
-    // 增加配额计数
-    quotaService.incrementUsage('IMAGE');
-    setQuotaStats(quotaService.getUsageStats());
 
     // 2. 执行生成
     try {
@@ -313,7 +353,8 @@ const App = () => {
       const blob = await res.blob();
       const objectUrl = URL.createObjectURL(blob);
 
-      setTasks(prev => prev.map(t =>
+      // 更新本地状态
+      setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
         t.id === newTask.id
           ? {
             ...t,
@@ -324,17 +365,48 @@ const App = () => {
           : t
       ));
 
+      // 如果已登录，同步更新到后端
+      if (isAuthenticated) {
+        try {
+          await apiService.updateTask(newTask.id, {
+            status: GenerationStatus.COMPLETED,
+            imageUrl: base64Url
+          });
+        } catch (syncErr: any) {
+          console.error('Failed to sync image to backend:', syncErr);
+          // 降级策略：如果由于图片太大或其他原因同步失败，尝试仅同步状态
+          // 这样至少在其他设备上能看到任务已完成（虽然没图）
+          try {
+            await apiService.updateTask(newTask.id, {
+              status: GenerationStatus.COMPLETED,
+              error: "(图片过大，无法同步到云端，仅保存在当前设备)"
+            });
+          } catch (finalErr) {
+            console.error('Final sync attempt failed:', finalErr);
+          }
+        }
+      }
+
     } catch (err: any) {
-      setTasks(prev => prev.map(t =>
+      const errorMsg = err.message || "图片生成失败";
+      setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
         t.id === newTask.id
           ? {
             ...t,
             status: GenerationStatus.FAILED,
-            error: err.message || "图片生成失败",
+            error: errorMsg,
             completedAt: Date.now()
           }
           : t
       ));
+
+      if (isAuthenticated) {
+        await apiService.updateTask(newTask.id, {
+          status: GenerationStatus.FAILED,
+          error: errorMsg
+        });
+      }
+
       if (err.message && err.message.includes("API Key")) {
         setIsGoogleConnected(false);
       }
@@ -342,7 +414,7 @@ const App = () => {
   };
 
   // 逻辑 C：生成视频任务
-  const handleGenerateVideo = () => {
+  const handleGenerateVideo = async () => {
     if (!prompt && !selectedImage) {
       alert("请输入提示词或上传一张图片");
       return;
@@ -357,7 +429,7 @@ const App = () => {
     const newTaskImagePreview = selectedImage ? URL.createObjectURL(selectedImage) : undefined;
 
     // 1. 创建新任务对象
-    const newTask: GenerationTask = {
+    let newTask: GenerationTask = {
       id: Date.now().toString(),
       type: 'VIDEO',
       status: GenerationStatus.GENERATING,
@@ -367,8 +439,28 @@ const App = () => {
       imagePreviewUrl: newTaskImagePreview
     };
 
+    // 如果已登录，后端同步创建
+    if (isAuthenticated) {
+      try {
+        const res = await apiService.createTask({
+          type: 'VIDEO',
+          prompt: newTask.prompt,
+          model: selectedModel,
+          // imagePreviewUrl: newTaskImagePreview // Blob URLs 无法同步，需要上传。暂时略过。
+        });
+        newTask.id = res.task.id || res.task._id;
+        if (res.quota) setQuotaStats(res.quota);
+      } catch (error: any) {
+        alert(`创建任务失败: ${error.message}`);
+        return;
+      }
+    } else {
+      quotaService.incrementUsage('VIDEO');
+      setQuotaStats(quotaService.getUsageStats());
+    }
+
     // 2. 更新状态：加入任务列表，并自动选中当前新任务
-    setTasks(prev => [newTask, ...prev]);
+    setTasks((prev: GenerationTask[]) => [newTask, ...prev]);
     setActiveTaskId(newTask.id);
 
     // 3. 准备API配置
@@ -382,11 +474,7 @@ const App = () => {
     setPrompt('');
     clearImage();
 
-    // 5. 增加配额计数
-    quotaService.incrementUsage('VIDEO');
-    setQuotaStats(quotaService.getUsageStats());
-
-    // 6. 加入队列执行
+    // 5. 加入队列执行 (本地 + 异步)
     queueService.enqueue(newTask, apiGenConfig);
     setQueueLength(queueService.getQueueLength());
   };
@@ -395,7 +483,7 @@ const App = () => {
   const runGenerationInBackground = async (taskId: string, config: GenerationConfig) => {
     try {
       let videoUrl: string;
-      
+
       // 根据模型选择不同的服务
       if (config.model === 'veo-3.1-fast-generate-preview') {
         // 使用 Veo 服务
@@ -404,8 +492,8 @@ const App = () => {
         // 使用自定义 API (Sora 兼容)
         videoUrl = await generateWithCustomApi(config, DEFAULT_CUSTOM_CONFIG);
       }
-      
-      setTasks(prev => prev.map(t =>
+
+      setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
         t.id === taskId
           ? {
             ...t,
@@ -415,18 +503,36 @@ const App = () => {
           }
           : t
       ));
+
+      // 同步到后端
+      if (apiService.isAuthenticated()) {
+        await apiService.updateTask(taskId, {
+          status: GenerationStatus.COMPLETED,
+          videoUrl: videoUrl
+        });
+      }
     } catch (err: any) {
       console.error(err);
-      setTasks(prev => prev.map(t =>
+      const errorMsg = err.message || "生成失败，未知错误";
+
+      setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
         t.id === taskId
           ? {
             ...t,
             status: GenerationStatus.FAILED,
-            error: err.message || "生成失败，未知错误",
+            error: errorMsg,
             completedAt: Date.now()
           }
           : t
       ));
+
+      // 同步失败状态到后端
+      if (apiService.isAuthenticated()) {
+        await apiService.updateTask(taskId, {
+          status: GenerationStatus.FAILED,
+          error: errorMsg
+        });
+      }
     }
   };
 
@@ -440,30 +546,60 @@ const App = () => {
   const handleClearAllTasks = async () => {
     if (tasks.length === 0) return;
     if (!confirm(`确定要清空所有 ${tasks.length} 个任务吗？这个操作不可恢复！`)) return;
-    
+
     try {
+      // 1. 同步到后端
+      if (isAuthenticated) {
+        await apiService.clearTasks();
+      }
+
+      // 2. 本地记录清空
       await dbService.clearAllTasks();
       setTasks([]);
       setActiveTaskId(null);
-    } catch (error) {
+
+      // 通知其他标签页
+      taskChannel.postMessage({ type: 'TASKS_UPDATED' });
+    } catch (error: any) {
       console.error('Failed to clear tasks:', error);
       alert('清空任务失败，请重试');
     }
   };
 
   // 删除单个任务
-  const handleDeleteTask = async (taskId: string) => {
+  const handleDeleteTask = async (e: React.MouseEvent, taskId: string) => {
+    e.stopPropagation(); // 阻止点击进入任务详情
     if (!confirm('确定要删除这个任务吗？')) return;
-    
+
     try {
+      // 1. 同步到后端
+      if (isAuthenticated) {
+        try {
+          await apiService.deleteTask(taskId);
+        } catch (apiError: any) {
+          // 如果任务在后端不存在 (404)，我们应该视为已经删除成功，继续清理本地数据
+          const errorMessage = apiError.message || '';
+          if (errorMessage.includes('not found') || errorMessage.includes('404')) {
+            console.warn('Backend task not found, proceeding with local deletion:', taskId);
+          } else {
+            // 其他错误则抛出，中断后续流程
+            throw apiError;
+          }
+        }
+      }
+
+      // 2. 本地记录删除
       await dbService.deleteTask(taskId);
-      setTasks(prev => prev.filter(t => t.id !== taskId));
+      setTasks((prev: GenerationTask[]) => prev.filter((t: GenerationTask) => t.id !== taskId));
       if (activeTaskId === taskId) {
         setActiveTaskId(null);
       }
-    } catch (error) {
+
+      // 通知其他标签页
+      taskChannel.postMessage({ type: 'TASKS_UPDATED' });
+    } catch (error: any) {
       console.error('Failed to delete task:', error);
-      alert('删除任务失败，请重试');
+      alert(`删除任务失败: ${error.message || '请重试'}`);
     }
   };
 
@@ -476,7 +612,7 @@ const App = () => {
   ];
 
   const imageModels = [
-    { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image (官方SDK)' },
+    { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image (官方)' },
   ];
 
   return (
@@ -540,13 +676,13 @@ const App = () => {
               <p className="text-zinc-700 text-xs mt-1">开始生成视频或图片吧</p>
             </div>
           ) : (
-            tasks.map(task => (
+            tasks.map((task: GenerationTask) => (
               <button
                 key={task.id}
                 onClick={() => setActiveTaskId(task.id)}
                 className={`w-full text-left p-3 rounded-xl border transition-all group relative overflow-hidden ${activeTask?.id === task.id
-                    ? 'bg-zinc-900 border-purple-600/50 shadow-lg shadow-purple-900/10'
-                    : 'bg-zinc-900/30 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900'
+                  ? 'bg-zinc-900 border-purple-600/50 shadow-lg shadow-purple-900/10'
+                  : 'bg-zinc-900/30 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900'
                   }`}
               >
                 <div className="flex justify-between items-start mb-2 relative z-10">
@@ -574,9 +710,18 @@ const App = () => {
                       <span className="bg-red-500/10 text-red-500 px-2 py-0.5 rounded text-[10px] font-bold border border-red-500/20">失败</span>
                     )}
                   </div>
-                  <span className="text-[10px] text-zinc-500">
-                    {new Date(task.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
+                  <div className="flex gap-2 items-center">
+                    <span className="text-[10px] text-zinc-500">
+                      {new Date(task.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <button
+                      onClick={(e: React.MouseEvent) => handleDeleteTask(e, task.id)}
+                      className="p-1.5 rounded-lg text-zinc-600 hover:text-red-500 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
+                      title="删除任务"
+                    >
+                      <TrashIcon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <div className="flex gap-3">
                   {task.imagePreviewUrl && (
@@ -638,8 +783,8 @@ const App = () => {
             <button
               onClick={!isGoogleConnected ? handleConnectGoogle : () => setShowConfig(!showConfig)}
               className={`text-xs px-3 py-1.5 rounded-full border transition-colors flex items-center gap-2 ${isGoogleConnected
-                  ? 'bg-green-500/10 text-green-500 border-green-500/20 hover:bg-green-500/20'
-                  : 'bg-zinc-800 text-white border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600'
+                ? 'bg-green-500/10 text-green-500 border-green-500/20 hover:bg-green-500/20'
+                : 'bg-zinc-800 text-white border-zinc-700 hover:bg-zinc-700 hover:border-zinc-600'
                 }`}
             >
               <SettingsIcon className="w-3 h-3" />
@@ -678,7 +823,7 @@ const App = () => {
               <div className="max-w-xl mx-auto space-y-6">
 
                 {/* Google Configuration (Hidden by default, showed if connected + clicked) */}
-                {showConfig && isGoogleConnected && (
+                {showConfig && (
                   <div className="bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl space-y-4 animate-in fade-in slide-in-from-top-2">
                     <div className="flex justify-between items-center">
                       <h3 className="text-sm font-bold text-white">Google 服务配置</h3>

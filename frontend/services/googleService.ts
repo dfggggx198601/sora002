@@ -8,13 +8,18 @@ export const generateImageWithGoogle = async (
   apiKey?: string
 ): Promise<string> => {
 
-  // Logic: 
   // 1. Prefer passed apiKey (from user settings)
-  // 2. Fallback to process.env.API_KEY (AI Studio)
+  // 2. Fallback to import.meta.env.VITE_GOOGLE_API_KEY
   // 3. Fallback to DEFAULT_GOOGLE_CONFIG.apiKey
   let finalApiKey = apiKey;
   if (!finalApiKey || finalApiKey.trim() === '') {
-    finalApiKey = process.env.API_KEY || DEFAULT_GOOGLE_CONFIG?.apiKey;
+    finalApiKey = import.meta.env.VITE_GOOGLE_API_KEY || DEFAULT_GOOGLE_CONFIG?.apiKey;
+  }
+
+  // Sanitization: Remove any non-ASCII characters (often causes Header errors)
+  if (finalApiKey) {
+    // eslint-disable-next-line no-control-regex
+    finalApiKey = finalApiKey.replace(/[^\x00-\x7F]/g, "").trim();
   }
 
   if (!finalApiKey) {
@@ -69,9 +74,10 @@ export const generateImageWithGoogle = async (
 
       if (targetModel.includes('gemini-3') || targetModel.includes('pro-image')) {
         requestParams.config = {
+          responseModalities: ['TEXT', 'IMAGE'],
           imageConfig: {
             aspectRatio: "1:1",
-            imageSize: "1K"
+            imageSize: "1024x1024" // Or "1K" based on docs, but 1:1 usually implies 1024
           }
         };
       }

@@ -23,13 +23,13 @@ app.use(cors({
 }));
 app.use(compression()); // 响应压缩
 app.use(morgan('dev')); // 日志
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // 健康检查
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });
@@ -39,22 +39,22 @@ app.get('/health', (req, res) => {
 app.get('/admin/init', async (req, res) => {
   try {
     const db = await getDB();
-    
+
     // 查找用户并更新角色为管理员
     const usersSnapshot = await db.collection('users')
       .where('email', '==', 'admin@sora.studio')
       .limit(1)
       .get();
-    
+
     if (usersSnapshot.empty) {
       return res.status(404).json({ error: 'Admin user not found' });
     }
-    
+
     const userDoc = usersSnapshot.docs[0];
     await userDoc.ref.update({
       role: 'admin'
     });
-    
+
     res.json({ message: 'User updated to admin role successfully', userId: userDoc.id });
   } catch (error) {
     console.error('Error updating user:', error);
@@ -80,7 +80,7 @@ const startServer = async () => {
   try {
     // 连接数据库
     await connectDB();
-    
+
     // 启动服务器
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);

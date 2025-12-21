@@ -3,39 +3,70 @@ set -e
 
 echo "🚀 部署 Sora Studio 完整系统到 Cloud Run"
 
-# 配置
-PROJECT_ID="genvideo-sora"
-REGION="asia-east1"
-BACKEND_SERVICE="sora-backend"
-FRONTEND_SERVICE="sora-studio"
-
-# 检查 gcloud
-if ! command -v gcloud &> /dev/null; then
-    echo "❌ gcloud CLI 未安装"
+# 自动获取项目 ID
+CURRENT_PROJECT=$(gcloud config get-value project)
+if [ -z "$CURRENT_PROJECT" ]; then
+    echo "❌ 未设置 gcloud 项目，请运行 'gcloud config set project [PROJECT_ID]'"
     exit 1
 fi
 
-# 设置项目
-echo "📋 设置项目: $PROJECT_ID"
-gcloud config set project $PROJECT_ID
+PROJECT_ID=$CURRENT_PROJECT
+REGION="asia-east1"
+BACKEND_SERVICE="sora-backend"
+FRONTEND_SERVICE="sora-studio"
+BUCKET_NAME="${PROJECT_ID}-assets"
+
+echo "📋 当前项目: $PROJECT_ID"
+echo "📍 部署区域: $REGION"
+
+# 启用必要的 API
+echo "🔌 启用必要的 Google Cloud API..."
+gcloud services enable \
+    run.googleapis.com \
+    artifactregistry.googleapis.com \
+    cloudbuild.googleapis.com \
+    firestore.googleapis.com \
+    storage.googleapis.com
 
 # 部署后端
 echo ""
+echo "🗄️ 准备 Cloud Storage 存储桶..."
+if gsutil ls -b gs://$BUCKET_NAME &>/dev/null; then
+  echo "✅ 存储桶已存在: $BUCKET_NAME"
+else
+  echo "📦 创建存储桶: $BUCKET_NAME"
+  gsutil mb -p $PROJECT_ID -l $REGION gs://$BUCKET_NAME
+  echo "🔓 设置公共只读权限..."
+  gsutil iam ch allUsers:objectViewer gs://$BUCKET_NAME
+fi
+
 echo "🔧 部署后端服务..."
 cd backend
 
-read -p "输入 JWT Secret (留空自动生成): " JWT_SECRET
-if [ -z "$JWT_SECRET" ]; then
-    JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-    echo "✅ 生成 JWT Secret: $JWT_SECRET"
+# JWT Secret 处理（优先从现有服务读取以保持稳定性）
+echo "🔍 正在检查现有配置..."
+EXISTING_SECRET=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --format='value(spec.template.spec.containers[0].env[?(@.name=="JWT_SECRET")].value)' 2>/dev/null)
+
+if [ -n "$EXISTING_SECRET" ]; then
+    JWT_SECRET=$EXISTING_SECRET
+    echo "✅ 沿用现有 JWT Secret"
+elif [ -z "$JWT_SECRET" ]; then
+    echo "💡 提示：未设置 JWT_SECRET 且未找到现有配置，将自动生成一个强随机密钥。"
+    if command -v openssl &> /dev/null; then
+        JWT_SECRET=$(openssl rand -hex 32)
+    else
+        JWT_SECRET="sora_secret_$(date +%s)_$RANDOM"
+    fi
+    echo "✅ 已生成 JWT Secret"
 fi
 
+# 部署后端到 Cloud Run
 gcloud run deploy $BACKEND_SERVICE \
   --source . \
   --region $REGION \
   --allow-unauthenticated \
-  --port 3001 \
-  --set-env-vars JWT_SECRET="$JWT_SECRET",NODE_ENV=production,GCP_PROJECT_ID="$PROJECT_ID" \
+  --port 8080 \
+  --set-env-vars JWT_SECRET="$JWT_SECRET",NODE_ENV=production,GCP_PROJECT_ID="$PROJECT_ID",GCS_BUCKET_NAME="$BUCKET_NAME" \
   --memory 512Mi \
   --cpu 1 \
   --max-instances 10
@@ -45,10 +76,14 @@ BACKEND_URL=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --f
 echo "✅ 后端部署完成: $BACKEND_URL"
 
 # 部署前端
-cd ..
 echo ""
 echo "🎨 部署前端服务..."
+cd ../frontend
 
+# 注入 Google API Key 到环境变量 (用于构建时)
+echo "VITE_GOOGLE_API_KEY=AIzaSyDRdEV1tFZCYtTZ2nMj435TzsNycjJ2PCc" > .env
+
+# 构建并部署前端到 Cloud Run
 gcloud run deploy $FRONTEND_SERVICE \
   --source . \
   --region $REGION \
@@ -59,13 +94,15 @@ gcloud run deploy $FRONTEND_SERVICE \
   --cpu 1 \
   --max-instances 10
 
+# 返回根目录
+cd ..
+
 # 获取前端 URL
 FRONTEND_URL=$(gcloud run services describe $FRONTEND_SERVICE --region $REGION --format='value(status.url)')
-echo "✅ 前端部署完成: $FRONTEND_URL"
 
-# 更新后端 CORS
+# 更新后端 CORS (非常重要)
 echo ""
-echo "🔄 更新后端 CORS 配置..."
+echo "🔄 更新后端 CORS 配置以匹配前端地址..."
 gcloud run services update $BACKEND_SERVICE \
   --region $REGION \
   --update-env-vars CORS_ORIGIN="$FRONTEND_URL"
@@ -78,7 +115,6 @@ echo "   前端: $FRONTEND_URL"
 echo "   后端: $BACKEND_URL"
 echo "   健康检查: $BACKEND_URL/health"
 echo ""
-echo "🔐 凭证信息:"
-echo "   JWT Secret: $JWT_SECRET"
+echo "🔐 安全提示:"
+echo "   JWT Secret 已配置。请务必在后台管理中确认 Firestore 规则。"
 echo ""
-echo "💡 提示: 请将以上凭证保存到安全的地方"
