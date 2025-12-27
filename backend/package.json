@@ -1,6 +1,6 @@
 {
   "name": "sora-studio-backend",
-  "version": "1.0.0",
+  "version": "0.2.0",
   "description": "Backend API for Sora Studio",
   "main": "dist/server.js",
   "scripts": {
@@ -32,6 +32,7 @@
     "compression": "^1.7.4",
     "@google-cloud/storage": "^7.7.0",
     "axios": "^1.6.2",
+    "md5": "^2.3.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

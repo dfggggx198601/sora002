@@ -1,12 +1,6 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  GenerationConfig,
-  GenerationTask,
-  GenerationStatus,
-  AppSettings,
-  UserProfile,
-  QuotaStats
+  GenerationConfig, GenerationTask, GenerationStatus, AppSettings, UserProfile, QuotaStats, AppAnnouncement, SystemSettings, PaymentPackage
 } from './types';
 import { DEFAULT_CUSTOM_CONFIG } from './constants';
 import { generateWithCustomApi } from './services/customService';
@@ -17,7 +11,17 @@ import { queueService } from './services/queueService';
 import { quotaService } from './services/quotaService';
 import { apiService } from './services/apiService';
 import AuthModal from './components/AuthModal';
-import { SparklesIcon, UploadIcon, VideoIcon, HistoryIcon, PlayIcon, SettingsIcon, ImageIcon, TrashIcon } from './components/Icons';
+import { SparklesIcon, UploadIcon, VideoIcon, HistoryIcon, PlayIcon, SettingsIcon, ImageIcon, TrashIcon, ChatIcon, PlusIcon } from './components/Icons';
+import ChatInterface from './components/ChatInterface';
+
+import { AdminLayout } from './components/AdminLayout';
+import { AdminDashboard } from './components/AdminDashboard';
+import { UserManagement } from './components/UserManagement';
+import { ContentAudit } from './components/ContentAudit';
+import { AdminSettings } from './components/AdminSettings';
+
+// 添加 Admin Tab 类型
+type AdminTab = 'dashboard' | 'users' | 'content' | 'settings';
 
 const App = () => {
   // --- State ---
@@ -26,12 +30,13 @@ const App = () => {
   const [googleBaseUrl, setGoogleBaseUrl] = useState<string>('');
   const [apiKey, setApiKey] = useState<string>(import.meta.env.VITE_GOOGLE_API_KEY || ''); // New: Load from Env
   const [showConfig, setShowConfig] = useState(false);
-  const [activeTab, setActiveTab] = useState<'video' | 'image'>('video');
+  const [activeTab, setActiveTab] = useState<'video' | 'image' | 'chat'>('video');
 
   // 认证状态
   const [isAuthenticated, setIsAuthenticated] = useState(apiService.isAuthenticated());
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [announcement, setAnnouncement] = useState<AppAnnouncement | null>(null);
 
   // 视频生成 - 输入区域状态
   const [prompt, setPrompt] = useState('');
@@ -55,10 +60,63 @@ const App = () => {
   const [queueLength, setQueueLength] = useState(0);
   const [quotaStats, setQuotaStats] = useState<QuotaStats>(quotaService.getUsageStats());
 
+  // Admin State
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [adminTab, setAdminTab] = useState<'dashboard' | 'users' | 'content'>('dashboard');
+
+  // Payment State
+  const [showBuyQuotaModal, setShowBuyQuotaModal] = useState(false);
+  const [paymentPackages, setPaymentPackages] = useState<PaymentPackage[]>([]);
+  const [selectedPackage, setSelectedPackage] = useState<PaymentPackage | null>(null);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 初始化 BroadcastChannel 用于跨标签页同步
   const taskChannel = React.useMemo(() => new BroadcastChannel('sora-tasks-sync'), []);
+
+  // Fetch Settings
+  const fetchSettings = async () => {
+    try {
+      // Use getSystemSettings which accesses the public endpoint
+      const settings = await apiService.getSystemSettings();
+      if (settings?.announcement?.enabled) {
+        setAnnouncement(settings.announcement);
+      }
+      if (settings?.paymentPackages) {
+        setPaymentPackages(settings.paymentPackages);
+      }
+    } catch (error) {
+      console.error('Failed to fetch settings:', error);
+    }
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!selectedPackage || !userProfile) return;
+
+    try {
+      setIsProcessingPayment(true);
+      // Simulate waiting (user scanning QR)
+      // In real world, we would poll for status or wait for webhook
+      // Here we just pretend it took 2 seconds
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      const result = await apiService.buyQuota(selectedPackage.id);
+
+      // Update local quota
+      if (result.quota) {
+        quotaService.syncUsage(result.quota);
+        setQuotaStats(quotaService.getUsageStats());
+      }
+
+      alert(`支付成功！${selectedPackage.name} 已到账。`);
+      setShowBuyQuotaModal(false);
+    } catch (error: any) {
+      alert(error.message || '支付失败，请重试');
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  };
 
   // 初始化：从 IndexedDB 加载历史任务
   useEffect(() => {
@@ -135,7 +193,34 @@ const App = () => {
     } else if (import.meta.env.VITE_GOOGLE_API_KEY) {
       setIsGoogleConnected(true);
     }
+    if (savedKey) {
+      setApiKey(savedKey);
+      setIsGoogleConnected(true);
+    } else if (import.meta.env.VITE_GOOGLE_API_KEY) {
+      setIsGoogleConnected(true);
+    }
+
+    // Check for Admin Route
+    const path = window.location.pathname;
+    if (path === '/admin') {
+      if (apiService.isAuthenticated()) {
+        // Wait for profile check to complete then redirect
+      } else {
+        setShowAuthModal(true);
+      }
+    }
+
+    fetchSettings();
   }, []);
+
+  // Update URL effect
+  useEffect(() => {
+    if (isAdminMode) {
+      window.history.pushState({}, '', '/admin');
+    } else {
+      window.history.pushState({}, '', '/');
+    }
+  }, [isAdminMode]);
 
   // 检查用户资料并同步任务
   const checkUserProfile = async () => {
@@ -145,6 +230,18 @@ const App = () => {
         const profile = await apiService.getProfile();
         setUserProfile(profile.user);
         setIsAuthenticated(true);
+
+        // 同步配额到本地 QuotaService
+        if (profile.user.quota) {
+          quotaService.setQuota({
+            dailyVideoLimit: profile.user.quota.dailyVideoLimit,
+            dailyImageLimit: profile.user.quota.dailyImageLimit,
+            dailyChatLimit: profile.user.quota.dailyChatLimit,
+          });
+          quotaService.syncUsage(profile.user.quota);
+          // 立即更新 UI 状态
+          setQuotaStats(quotaService.getUsageStats());
+        }
 
         // 同步服务器任务到本地
         try {
@@ -158,10 +255,15 @@ const App = () => {
       } catch (error: any) {
         console.error('Failed to get user profile:', error);
         apiService.clearToken();
-        setIsAuthenticated(false);
       }
     }
   };
+
+  useEffect(() => {
+    if (userProfile?.role === 'admin' && window.location.pathname === '/admin') {
+      setIsAdminMode(true);
+    }
+  }, [userProfile]);
 
   // Auth Handler
   const handleConnectGoogle = async () => {
@@ -266,7 +368,7 @@ const App = () => {
       setIsRefImageMode(false); // 生成成功后切回预览
       setRefImagePrompt(''); // 清空图片提示词
     } catch (error: any) {
-      alert(`图片生成失败: ${error.message}`);
+      alert(`图片生成失败: ${error.message} `);
       // If error is related to Auth, reset state
       if (error.message.includes("API Key")) {
         setIsGoogleConnected(false);
@@ -567,6 +669,77 @@ const App = () => {
   };
 
   // 删除单个任务
+  // --- Chat Handlers ---
+  // --- Chat Handlers ---
+  const handleNewChat = async () => {
+    // 检查配额
+    if (!quotaService.canGenerate('CHAT')) {
+      alert(`今日对话配额已用尽！剩余: ${quotaService.getRemainingQuota('CHAT')} / ${quotaStats.dailyChatLimit || 50}`);
+      return;
+    }
+
+    let newTaskId = Date.now().toString();
+    const newTask: GenerationTask = {
+      id: newTaskId,
+      type: 'CHAT',
+      status: GenerationStatus.IDLE,
+      prompt: 'New Chat',
+      model: 'gemini-3-pro-preview',
+      createdAt: Date.now(),
+      messages: []
+    };
+
+    // 如果已登录，同步创建到后端
+    if (isAuthenticated) {
+      try {
+        const res = await apiService.createTask({
+          type: 'CHAT',
+          prompt: 'New Chat',
+          model: 'gemini-3-pro-preview'
+        });
+        // 使用服务器 ID
+        newTaskId = res.task.id || res.task._id;
+        newTask.id = newTaskId;
+      } catch (err) {
+        console.error('Failed to create chat task on server:', err);
+        // Continue with local task? Yes.
+      }
+    }
+
+    setTasks(prev => [newTask, ...prev]);
+    setActiveTaskId(newTaskId);
+    setActiveTab('chat');
+  };
+
+  const handleUpdateTask = async (updatedTask: GenerationTask) => {
+    setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
+
+    // 如果是聊天任务且已登录，同步消息到后端
+    if (updatedTask.type === 'CHAT' && isAuthenticated) {
+      try {
+        await apiService.updateTask(updatedTask.id, {
+          messages: updatedTask.messages,
+          status: updatedTask.status
+        });
+      } catch (err) {
+        console.error('Failed to sync chat messages to server:', err);
+      }
+    }
+  };
+
+  const handleGenerateImageForChat = async (prompt: string): Promise<string | null> => {
+    // Reuse existing image generation logic
+    // For Chat, we usually want to use the Google Service directly
+    try {
+      console.log(`[Chat Image Gen] Using model: ${selectedImageModel}`);
+      const url = await generateImageWithGoogle(prompt, selectedImageModel, googleBaseUrl, apiKey);
+      return url;
+    } catch (e) {
+      console.error("Chat Image Gen Error", e);
+      return null;
+    }
+  };
+
   const handleDeleteTask = async (e: React.MouseEvent, taskId: string) => {
     e.stopPropagation(); // 阻止点击进入任务详情
     if (!confirm('确定要删除这个任务吗？')) return;
@@ -615,8 +788,44 @@ const App = () => {
     { id: 'gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image (官方)' },
   ];
 
+  if (isAdminMode) {
+    return (
+      <AdminLayout
+        activeTab={adminTab}
+        onTabChange={(tab: string) => setAdminTab(tab as any)}
+        onExit={() => setIsAdminMode(false)}
+      >
+        {adminTab === 'dashboard' && <AdminDashboard />}
+        {adminTab === 'users' && <UserManagement />}
+        {adminTab === 'content' && <ContentAudit />}
+        {adminTab === 'settings' && <AdminSettings />}
+      </AdminLayout>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col md:flex-row bg-black text-zinc-100 font-sans selection:bg-purple-500/30">
+
+      {/* Global Announcement Banner */}
+      {announcement && (
+        <div className={`fixed top-0 left-0 right-0 z-[60] py-2 px-4 text-center text-sm font-medium animate-fade-in ${announcement.type === 'error' ? 'bg-red-500 text-white' :
+          announcement.type === 'warning' ? 'bg-yellow-500 text-black' :
+            'bg-blue-600 text-white'
+          }`}>
+          {announcement.message}
+        </div>
+      )}
+
+      {/* Admin Entry Button */}
+      {userProfile?.role === 'admin' && (
+        <button
+          onClick={() => setIsAdminMode(true)}
+          className="fixed bottom-4 left-4 z-50 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-full shadow-lg font-medium transition-colors border border-white/10 flex items-center gap-2"
+        >
+          <SettingsIcon className="w-4 h-4" />
+          Admin Panel
+        </button>
+      )}
 
       {/* Sidebar */}
       <aside className="w-full md:w-80 bg-zinc-950 border-r border-zinc-900 flex flex-col h-[35vh] md:h-screen z-20">
@@ -644,8 +853,23 @@ const App = () => {
                   {quotaStats.imageCount} / {quotaStats.imageLimit}
                 </span>
               </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-zinc-500">💬 对话</span>
+                <span className="text-xs font-medium text-indigo-400">
+                  {quotaStats.chatCount} / {quotaStats.dailyChatLimit || 50}
+                </span>
+              </div>
+
+              <button
+                onClick={() => setShowBuyQuotaModal(true)}
+                className="w-full mt-2 py-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border border-amber-500/30 hover:border-amber-500/50 rounded text-xs text-amber-500 hover:text-amber-400 transition-all flex items-center justify-center gap-1.5"
+                title="购买配额加油包"
+              >
+                <span>💎</span> 购买配额加油包
+              </button>
+
               {queueLength > 0 && (
-                <div className="flex justify-between items-center pt-1.5 border-t border-zinc-800">
+                <div className="flex justify-between items-center pt-1.5 border-t border-zinc-800 mt-1.5">
                   <span className="text-xs text-zinc-500">🕒 队列中</span>
                   <span className="text-xs font-medium text-yellow-400">
                     {queueLength} 个任务
@@ -670,84 +894,86 @@ const App = () => {
             )}
           </div>
 
-          {tasks.length === 0 ? (
-            <div className="text-center py-10 px-4">
-              <p className="text-zinc-600 text-sm">暂无任务</p>
-              <p className="text-zinc-700 text-xs mt-1">开始生成视频或图片吧</p>
-            </div>
-          ) : (
-            tasks.map((task: GenerationTask) => (
-              <button
-                key={task.id}
-                onClick={() => setActiveTaskId(task.id)}
-                className={`w-full text-left p-3 rounded-xl border transition-all group relative overflow-hidden ${activeTask?.id === task.id
-                  ? 'bg-zinc-900 border-purple-600/50 shadow-lg shadow-purple-900/10'
-                  : 'bg-zinc-900/30 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900'
-                  }`}
-              >
-                <div className="flex justify-between items-start mb-2 relative z-10">
-                  <div className="flex items-center gap-2">
-                    {/* Icon based on Type */}
-                    {task.type === 'VIDEO' ? (
-                      <VideoIcon className="w-3 h-3 text-purple-400" />
-                    ) : (
-                      <ImageIcon className="w-3 h-3 text-pink-400" />
-                    )}
+          {
+            tasks.length === 0 ? (
+              <div className="text-center py-10 px-4">
+                <p className="text-zinc-600 text-sm">暂无任务</p>
+                <p className="text-zinc-700 text-xs mt-1">开始生成视频或图片吧</p>
+              </div>
+            ) : (
+              tasks.map((task: GenerationTask) => (
+                <button
+                  key={task.id}
+                  onClick={() => setActiveTaskId(task.id)}
+                  className={`w-full text-left p-3 rounded-xl border transition-all group relative overflow-hidden ${activeTask?.id === task.id
+                    ? 'bg-zinc-900 border-purple-600/50 shadow-lg shadow-purple-900/10'
+                    : 'bg-zinc-900/30 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900'
+                    }`}
+                >
+                  <div className="flex justify-between items-start mb-2 relative z-10">
+                    <div className="flex items-center gap-2">
+                      {/* Icon based on Type */}
+                      {task.type === 'VIDEO' ? (
+                        <VideoIcon className="w-3 h-3 text-purple-400" />
+                      ) : (
+                        <ImageIcon className="w-3 h-3 text-pink-400" />
+                      )}
 
-                    {task.status === GenerationStatus.GENERATING && (
-                      <div className="flex items-center gap-1.5 bg-yellow-500/10 text-yellow-500 px-2 py-0.5 rounded text-[10px] font-bold border border-yellow-500/20">
-                        <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></div>
-                        生成中
-                      </div>
-                    )}
-                    {task.status === GenerationStatus.COMPLETED && (
-                      <div className="flex gap-2">
-                        <span className="bg-green-500/10 text-green-500 px-2 py-0.5 rounded text-[10px] font-bold border border-green-500/20">完成</span>
-                        <span className="text-[10px] text-zinc-500 flex items-center">⏱ {formatDuration(task.createdAt, task.completedAt)}</span>
-                      </div>
-                    )}
-                    {task.status === GenerationStatus.FAILED && (
-                      <span className="bg-red-500/10 text-red-500 px-2 py-0.5 rounded text-[10px] font-bold border border-red-500/20">失败</span>
-                    )}
+                      {task.status === GenerationStatus.GENERATING && (
+                        <div className="flex items-center gap-1.5 bg-yellow-500/10 text-yellow-500 px-2 py-0.5 rounded text-[10px] font-bold border border-yellow-500/20">
+                          <div className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse"></div>
+                          生成中
+                        </div>
+                      )}
+                      {task.status === GenerationStatus.COMPLETED && (
+                        <div className="flex gap-2">
+                          <span className="bg-green-500/10 text-green-500 px-2 py-0.5 rounded text-[10px] font-bold border border-green-500/20">完成</span>
+                          <span className="text-[10px] text-zinc-500 flex items-center">⏱ {formatDuration(task.createdAt, task.completedAt)}</span>
+                        </div>
+                      )}
+                      {task.status === GenerationStatus.FAILED && (
+                        <span className="bg-red-500/10 text-red-500 px-2 py-0.5 rounded text-[10px] font-bold border border-red-500/20">失败</span>
+                      )}
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <span className="text-[10px] text-zinc-500">
+                        {new Date(task.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <button
+                        onClick={(e: React.MouseEvent) => handleDeleteTask(e, task.id)}
+                        className="p-1.5 rounded-lg text-zinc-600 hover:text-red-500 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
+                        title="删除任务"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex gap-2 items-center">
-                    <span className="text-[10px] text-zinc-500">
-                      {new Date(task.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <button
-                      onClick={(e: React.MouseEvent) => handleDeleteTask(e, task.id)}
-                      className="p-1.5 rounded-lg text-zinc-600 hover:text-red-500 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"
-                      title="删除任务"
-                    >
-                      <TrashIcon className="w-3.5 h-3.5" />
-                    </button>
+                  <div className="flex gap-3">
+                    {task.imagePreviewUrl && (
+                      <img src={task.imagePreviewUrl} alt="ref" className="w-8 h-8 rounded object-cover border border-zinc-700 flex-shrink-0" />
+                    )}
+                    {task.type === 'IMAGE' && task.imageUrl && (
+                      <img src={task.imageUrl} alt="res" className="w-8 h-8 rounded object-cover border border-zinc-700 flex-shrink-0" />
+                    )}
+                    <p className="text-sm text-zinc-300 line-clamp-2 font-medium leading-snug relative z-10">
+                      {task.prompt}
+                    </p>
                   </div>
-                </div>
-                <div className="flex gap-3">
-                  {task.imagePreviewUrl && (
-                    <img src={task.imagePreviewUrl} alt="ref" className="w-8 h-8 rounded object-cover border border-zinc-700 flex-shrink-0" />
+                  {task.status === GenerationStatus.GENERATING && (
+                    <div className="absolute bottom-0 left-0 h-0.5 bg-gradient-to-r from-purple-600 to-indigo-600 animate-[width_20s_ease-out_forwards] w-0"></div>
                   )}
-                  {task.type === 'IMAGE' && task.imageUrl && (
-                    <img src={task.imageUrl} alt="res" className="w-8 h-8 rounded object-cover border border-zinc-700 flex-shrink-0" />
-                  )}
-                  <p className="text-sm text-zinc-300 line-clamp-2 font-medium leading-snug relative z-10">
-                    {task.prompt}
-                  </p>
-                </div>
-                {task.status === GenerationStatus.GENERATING && (
-                  <div className="absolute bottom-0 left-0 h-0.5 bg-gradient-to-r from-purple-600 to-indigo-600 animate-[width_20s_ease-out_forwards] w-0"></div>
-                )}
-              </button>
-            ))
-          )}
-        </div>
-      </aside>
+                </button>
+              ))
+            )
+          }
+        </div >
+      </aside >
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col h-[65vh] md:h-screen overflow-hidden relative">
+      < main className="flex-1 flex flex-col h-[65vh] md:h-screen overflow-hidden relative" >
 
         {/* Top Bar */}
-        <header className="h-14 border-b border-zinc-900 flex items-center justify-between px-6 bg-black/80 backdrop-blur-md z-10 sticky top-0">
+        < header className="h-14 border-b border-zinc-900 flex items-center justify-between px-6 bg-black/80 backdrop-blur-md z-10 sticky top-0" >
           <div className="flex items-center gap-2">
             <span className="text-zinc-400 text-sm font-medium">AI 创意控制台</span>
           </div>
@@ -791,16 +1017,16 @@ const App = () => {
               {isGoogleConnected ? 'Google 已连接 (点击配置代理)' : '连接 Google 账号'}
             </button>
           </div>
-        </header>
+        </header >
 
         {/* Workspace */}
-        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+        < div className="flex-1 flex flex-col md:flex-row overflow-hidden" >
 
           {/* Left Column: Input Area */}
-          <div className="w-full md:w-1/2 lg:w-[40%] border-r border-zinc-900 flex flex-col bg-black">
+          < div className="w-full md:w-1/2 lg:w-[40%] border-r border-zinc-900 flex flex-col bg-black" >
 
             {/* Tab Switcher */}
-            <div className="flex border-b border-zinc-900">
+            < div className="flex border-b border-zinc-900" >
               <button
                 onClick={() => setActiveTab('video')}
                 className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'video' ? 'text-white bg-zinc-900/50' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/20'}`}
@@ -811,13 +1037,19 @@ const App = () => {
               </button>
               <button
                 onClick={() => setActiveTab('image')}
-                className={`flex-1 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors relative ${activeTab === 'image' ? 'text-white bg-zinc-900/50' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/20'}`}
+                className={`flex-1 py-3 text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 ${activeTab === 'image' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
               >
                 <ImageIcon className="w-4 h-4" />
                 图片生成
-                {activeTab === 'image' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-pink-600"></div>}
               </button>
-            </div>
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={`flex-1 py-3 text-sm font-medium rounded-xl transition-all flex items-center justify-center gap-2 ${activeTab === 'chat' ? 'bg-zinc-800 text-white shadow-lg' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                <ChatIcon className="w-4 h-4" />
+                对话
+              </button>
+            </div >
 
             <div className="flex-1 overflow-y-auto p-6">
               <div className="max-w-xl mx-auto space-y-6">
@@ -1034,161 +1266,281 @@ const App = () => {
                   </div>
                 )}
 
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Preview Area */}
-          <div className="w-full md:w-1/2 lg:w-[60%] bg-zinc-950 flex flex-col items-center justify-center p-6 relative border-l border-zinc-900/50">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900/40 to-zinc-950 -z-10"></div>
-
-            {activeTask ? (
-              <div className="w-full max-w-4xl animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col h-full justify-center">
-
-                {/* Task Header info */}
-                <div className="mb-4">
-                  <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-3">
-                    {activeTask.status === GenerationStatus.COMPLETED && "✅ 生成成功"}
-                    {activeTask.status === GenerationStatus.FAILED && "❌ 生成失败"}
-                    {activeTask.status === GenerationStatus.GENERATING && "⏳ 正在生成中..."}
-                  </h2>
-                  <div className="flex gap-4 text-xs text-zinc-500">
-                    <span className={`px-2 py-0.5 rounded border ${activeTask.type === 'VIDEO' ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' : 'bg-pink-500/10 border-pink-500/20 text-pink-400'}`}>
-                      {activeTask.type === 'VIDEO' ? '视频任务' : '图片任务'}
-                    </span>
-                    <p>ID: {activeTask.id}</p>
-                    <p>Model: {activeTask.model}</p>
-                    {activeTask.completedAt && (
-                      <p className="text-zinc-400">总耗时: {formatDuration(activeTask.createdAt, activeTask.completedAt)}</p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Main Display Box */}
-                <div className="relative w-full bg-black rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 group flex-shrink-0 min-h-[300px] flex items-center justify-center">
-
-                  {/* CASE 1: Completed VIDEO */}
-                  {activeTask.status === GenerationStatus.COMPLETED && activeTask.type === 'VIDEO' && activeTask.videoUrl && (
-                    <video
-                      src={activeTask.videoUrl}
-                      controls
-                      autoPlay
-                      loop
-                      className="w-full h-full object-contain max-h-[60vh]"
-                    />
-                  )}
-
-                  {/* CASE 2: Completed IMAGE */}
-                  {activeTask.status === GenerationStatus.COMPLETED && activeTask.type === 'IMAGE' && activeTask.imageUrl && (
-                    <img
-                      src={activeTask.imageUrl}
-                      alt="Generated Result"
-                      className="w-full h-full object-contain max-h-[60vh]"
-                    />
-                  )}
-
-                  {/* CASE 3: Generating */}
-                  {activeTask.status === GenerationStatus.GENERATING && (
-                    <div className="flex flex-col items-center justify-center p-12 text-center">
-                      <div className={`w-16 h-16 border-4 rounded-full animate-spin mb-6 ${activeTask.type === 'VIDEO' ? 'border-purple-500/30 border-t-purple-500' : 'border-pink-500/30 border-t-pink-500'}`}></div>
-                      <p className="text-lg font-medium text-white animate-pulse">正在渲染{activeTask.type === 'VIDEO' ? '视频' : '图片'}...</p>
-                      <p className="text-sm text-zinc-500 mt-2 max-w-md">
-                        您的任务正在云端处理中，请耐心等待。
-                      </p>
-                      <div className="mt-6 px-4 py-2 bg-zinc-900 rounded-lg border border-zinc-800">
-                        <span className="text-xs text-zinc-400">Prompt: </span>
-                        <span className="text-xs text-zinc-300 italic">"{activeTask.prompt.substring(0, 50)}..."</span>
-                      </div>
+                {/* ============ CHAT TAB CONTENT ============ */}
+                {activeTab === 'chat' && (
+                  <div className="space-y-6 animate-in fade-in duration-300">
+                    <div>
+                      <h2 className="text-lg font-bold text-white mb-1">AI 助手</h2>
+                      <p className="text-xs text-zinc-500">与 Gemini 1.5 Pro 对话，生成图片或分析内容。</p>
                     </div>
-                  )}
 
-                  {/* CASE 4: Failed */}
-                  {activeTask.status === GenerationStatus.FAILED && (
-                    <div className="flex flex-col items-center justify-center p-12 text-center w-full">
-                      <div className="w-16 h-16 bg-red-900/20 rounded-full flex items-center justify-center mb-4 border border-red-500/20">
-                        <span className="text-3xl text-red-500">⚠️</span>
+                    <div className="flex-1 flex flex-col items-center justify-center py-12 border-2 border-dashed border-zinc-800 rounded-2xl bg-zinc-900/20">
+                      <div className="w-16 h-16 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-full flex items-center justify-center mb-4">
+                        <ChatIcon className="w-8 h-8 text-indigo-400" />
                       </div>
-                      <h3 className="text-lg font-bold text-red-400 mb-2">生成出错</h3>
-                      <p className="text-zinc-400 text-sm mb-4">API 返回了以下错误信息：</p>
-                      <div className="w-full max-w-lg bg-red-950/30 border border-red-900/50 rounded-lg p-4 text-left overflow-x-auto">
-                        <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono break-all">
-                          {activeTask.error || "未知错误，请检查网络连接或 API 配置。"}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Footer Info / Actions */}
-                {activeTask.status === GenerationStatus.COMPLETED && (
-                  <div className="mt-6 space-y-4">
-                    {/* URL Box (Only for Video usually, but useful for debug) */}
-                    {activeTask.type === 'VIDEO' && activeTask.videoUrl && (
-                      <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4">
-                        <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider mb-2 block">视频真实链接 (URL)</label>
-                        <div className="flex gap-2">
-                          <input
-                            readOnly
-                            value={activeTask.videoUrl}
-                            className="flex-1 bg-black border border-zinc-800 rounded px-3 py-2 text-xs text-blue-400 font-mono focus:outline-none focus:border-blue-500/50"
-                            onClick={(e) => e.currentTarget.select()}
-                          />
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(activeTask.videoUrl || '');
-                              alert('链接已复制');
-                            }}
-                            className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-xs text-white rounded transition-colors"
-                          >
-                            复制
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex justify-between items-center">
-                      <p className="text-zinc-500 text-sm max-w-[70%] line-clamp-2" title={activeTask.prompt}>
-                        <span className="text-zinc-400 font-medium">提示词:</span> {activeTask.prompt}
+                      <h3 className="text-white font-medium mb-1">开始新对话</h3>
+                      <p className="text-zinc-500 text-sm mb-6 text-center max-w-[200px]">
+                        创建一个新的对话任务，支持多模态输入和生图。
                       </p>
 
-                      <a
-                        href={activeTask.type === 'VIDEO' ? activeTask.videoUrl : activeTask.imageUrl}
-                        download={activeTask.type === 'VIDEO' ? `sora-video-${activeTask.id}.mp4` : `gemini-image-${activeTask.id}.png`}
-                        className="px-6 py-2.5 bg-white text-black hover:bg-zinc-200 rounded-lg text-sm font-bold transition-colors shadow-lg shadow-white/10 flex items-center gap-2"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <button
+                        onClick={handleNewChat}
+                        className="px-6 py-2.5 bg-white text-black font-bold rounded-lg hover:bg-zinc-200 transition-colors flex items-center gap-2"
                       >
-                        <UploadIcon className="w-4 h-4 rotate-180" />
-                        下载{activeTask.type === 'VIDEO' ? '视频' : '图片'}
-                      </a>
+                        <PlusIcon className="w-4 h-4" />
+                        新建对话
+                      </button>
                     </div>
                   </div>
                 )}
-              </div>
-            ) : (
-              // Empty State
-              <div className="text-center space-y-4 max-w-sm">
-                <div className="w-24 h-24 bg-zinc-900/50 border border-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <SparklesIcon className="w-10 h-10 text-zinc-600 ml-1" />
-                </div>
-                <h3 className="text-2xl font-bold text-white">Sora 创意工坊</h3>
-                <p className="text-zinc-500 leading-relaxed">
-                  选择上方 <strong>视频</strong> 或 <strong>图片</strong> 标签页，<br />输入提示词开始您的 AI 创作之旅。
-                </p>
-              </div>
-            )}
-          </div>
 
-        </div>
-      </main>
+              </div>
+            </div>
+          </div >
+
+          {/* Right Column: Preview Area */}
+          < div className="w-full md:w-1/2 lg:w-[60%] bg-zinc-950 flex flex-col items-center justify-center p-6 relative border-l border-zinc-900/50" >
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-zinc-900/40 to-zinc-950 -z-10"></div>
+
+            {
+              activeTask ? (
+                activeTask.type === 'CHAT' ? (
+                  <div className="w-full h-full p-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                    <ChatInterface
+                      task={activeTask}
+                      apiKey={apiKey}
+                      onUpdateTask={handleUpdateTask}
+                      onGenerateImage={handleGenerateImageForChat}
+                    />
+                  </div>
+                ) : (
+                  <div className="w-full max-w-4xl animate-in fade-in slide-in-from-bottom-4 duration-300 flex flex-col h-full justify-center">
+
+                    {/* Task Header info */}
+                    <div className="mb-4">
+                      <h2 className="text-xl font-bold text-white mb-1 flex items-center gap-3">
+                        {activeTask.status === GenerationStatus.COMPLETED && "✅ 生成成功"}
+                        {activeTask.status === GenerationStatus.FAILED && "❌ 生成失败"}
+                        {activeTask.status === GenerationStatus.GENERATING && "⏳ 正在生成中..."}
+                      </h2>
+                      <div className="flex gap-4 text-xs text-zinc-500">
+                        <span className={`px-2 py-0.5 rounded border ${activeTask.type === 'VIDEO' ? 'bg-purple-500/10 border-purple-500/20 text-purple-400' : 'bg-pink-500/10 border-pink-500/20 text-pink-400'}`}>
+                          {activeTask.type === 'VIDEO' ? '视频任务' : '图片任务'}
+                        </span>
+                        <p>ID: {activeTask.id}</p>
+                        <p>Model: {activeTask.model}</p>
+                        {activeTask.completedAt && (
+                          <p className="text-zinc-400">总耗时: {formatDuration(activeTask.createdAt, activeTask.completedAt)}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Main Display Box */}
+                    <div className="relative w-full bg-black rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 group flex-shrink-0 min-h-[300px] flex items-center justify-center">
+
+                      {/* CASE 1: Completed VIDEO */}
+                      {activeTask.status === GenerationStatus.COMPLETED && activeTask.type === 'VIDEO' && activeTask.videoUrl && (
+                        <video
+                          src={activeTask.videoUrl}
+                          controls
+                          autoPlay
+                          loop
+                          className="w-full h-full object-contain max-h-[60vh]"
+                        />
+                      )}
+
+                      {/* CASE 2: Completed IMAGE */}
+                      {activeTask.status === GenerationStatus.COMPLETED && activeTask.type === 'IMAGE' && activeTask.imageUrl && (
+                        <img
+                          src={activeTask.imageUrl}
+                          alt="Generated Result"
+                          className="w-full h-full object-contain max-h-[60vh]"
+                        />
+                      )}
+
+                      {/* CASE 3: Generating */}
+                      {activeTask.status === GenerationStatus.GENERATING && (
+                        <div className="flex flex-col items-center justify-center p-12 text-center">
+                          <div className={`w-16 h-16 border-4 rounded-full animate-spin mb-6 ${activeTask.type === 'VIDEO' ? 'border-purple-500/30 border-t-purple-500' : 'border-pink-500/30 border-t-pink-500'}`}></div>
+                          <p className="text-lg font-medium text-white animate-pulse">正在渲染{activeTask.type === 'VIDEO' ? '视频' : '图片'}...</p>
+                          <p className="text-sm text-zinc-500 mt-2 max-w-md">
+                            您的任务正在云端处理中，请耐心等待。
+                          </p>
+                          <div className="mt-6 px-4 py-2 bg-zinc-900 rounded-lg border border-zinc-800">
+                            <span className="text-xs text-zinc-400">Prompt: </span>
+                            <span className="text-xs text-zinc-300 italic">"{activeTask.prompt.substring(0, 50)}..."</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* CASE 4: Failed */}
+                      {activeTask.status === GenerationStatus.FAILED && (
+                        <div className="flex flex-col items-center justify-center p-12 text-center w-full">
+                          <div className="w-16 h-16 bg-red-900/20 rounded-full flex items-center justify-center mb-4 border border-red-500/20">
+                            <span className="text-3xl text-red-500">⚠️</span>
+                          </div>
+                          <h3 className="text-lg font-bold text-red-400 mb-2">生成出错</h3>
+                          <p className="text-zinc-400 text-sm mb-4">API 返回了以下错误信息：</p>
+                          <div className="w-full max-w-lg bg-red-950/30 border border-red-900/50 rounded-lg p-4 text-left overflow-x-auto">
+                            <pre className="text-xs text-red-300 whitespace-pre-wrap font-mono break-all">
+                              {activeTask.error || "未知错误，请检查网络连接或 API 配置。"}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Footer Info / Actions */}
+                    {activeTask.status === GenerationStatus.COMPLETED && (
+                      <div className="mt-6 space-y-4">
+                        {/* URL Box (Only for Video usually, but useful for debug) */}
+                        {activeTask.type === 'VIDEO' && activeTask.videoUrl && (
+                          <div className="bg-zinc-900/80 border border-zinc-800 rounded-xl p-4">
+                            <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider mb-2 block">视频真实链接 (URL)</label>
+                            <div className="flex gap-2">
+                              <input
+                                readOnly
+                                value={activeTask.videoUrl}
+                                className="flex-1 bg-black border border-zinc-800 rounded px-3 py-2 text-xs text-blue-400 font-mono focus:outline-none focus:border-blue-500/50"
+                                onClick={(e) => e.currentTarget.select()}
+                              />
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(activeTask.videoUrl || '');
+                                  alert('链接已复制');
+                                }}
+                                className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-xs text-white rounded transition-colors"
+                              >
+                                复制
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex justify-between items-center">
+                          <p className="text-zinc-500 text-sm max-w-[70%] line-clamp-2" title={activeTask.prompt}>
+                            <span className="text-zinc-400 font-medium">提示词:</span> {activeTask.prompt}
+                          </p>
+
+                          <a
+                            href={activeTask.type === 'VIDEO' ? activeTask.videoUrl : activeTask.imageUrl}
+                            download={activeTask.type === 'VIDEO' ? `sora-video-${activeTask.id}.mp4` : `gemini-image-${activeTask.id}.png`}
+                            className="px-6 py-2.5 bg-white text-black hover:bg-zinc-200 rounded-lg text-sm font-bold transition-colors shadow-lg shadow-white/10 flex items-center gap-2"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <UploadIcon className="w-4 h-4 rotate-180" />
+                            下载{activeTask.type === 'VIDEO' ? '视频' : '图片'}
+                          </a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )) : (
+                // Empty State
+                <div className="text-center space-y-4 max-w-sm">
+                  <div className="w-24 h-24 bg-zinc-900/50 border border-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <SparklesIcon className="w-10 h-10 text-zinc-600 ml-1" />
+                  </div>
+                  <h3 className="text-2xl font-bold text-white">Sora 创意工坊</h3>
+                  <p className="text-zinc-500 leading-relaxed">
+                    选择上方 <strong>视频</strong> 或 <strong>图片</strong> 标签页，<br />输入提示词开始您的 AI 创作之旅。
+                  </p>
+                </div>
+              )
+            }
+          </div >
+
+        </div >
+      </main >
 
       {/* 认证模态框 */}
       <AuthModal
         isOpen={showAuthModal}
         onClose={() => setShowAuthModal(false)}
+        onAuthSuccess={() => {
+          checkUserProfile();
+          setShowAuthModal(false);
+        }}
+      />
+
+      {/* 购买配额模态框 */}
+      {showBuyQuotaModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 w-full max-w-lg shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <button
+              onClick={() => setShowBuyQuotaModal(false)}
+              className="absolute top-4 right-4 text-zinc-500 hover:text-white"
+            >
+              ✕
+            </button>
+
+            <h3 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
+              <span className="text-2xl">💎</span> 购买配额加油包
+            </h3>
+            <p className="text-sm text-zinc-400 mb-6">购买后的额度将立即添加到您的账户，仅限当日有效。</p>
+
+            <div className="space-y-3 mb-6">
+              {paymentPackages.length === 0 ? (
+                <div className="text-center py-8 text-zinc-500 bg-black/20 rounded-lg">
+                  暂无可用套餐，请联系管理员。
+                </div>
+              ) : (
+                paymentPackages.map(pkg => (
+                  <button
+                    key={pkg.id}
+                    onClick={() => setSelectedPackage(pkg)}
+                    className={`w-full flex items-center justify-between p-4 rounded-xl border transition-all ${selectedPackage?.id === pkg.id
+                      ? 'bg-purple-600/20 border-purple-500 ring-1 ring-purple-500'
+                      : 'bg-zinc-800/50 border-zinc-700 hover:bg-zinc-800 hover:border-zinc-600'
+                      }`}
+                  >
+                    <div className="text-left">
+                      <div className="text-white font-bold text-base">{pkg.name}</div>
+                      <div className="text-xs text-zinc-400 mt-1 flex gap-2">
+                        {pkg.videoIncrease > 0 && <span className="bg-purple-500/10 text-purple-400 px-1.5 py-0.5 rounded">视频 +{pkg.videoIncrease}</span>}
+                        {pkg.imageIncrease > 0 && <span className="bg-pink-500/10 text-pink-400 px-1.5 py-0.5 rounded">图片 +{pkg.imageIncrease}</span>}
+                        {pkg.chatIncrease > 0 && <span className="bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded">对话 +{pkg.chatIncrease}</span>}
+                      </div>
+                    </div>
+                    <div className="text-xl font-bold text-white">
+                      ¥ {pkg.price}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+
+            {selectedPackage && (
+              <div className="bg-zinc-950 rounded-lg p-4 border border-zinc-800 text-center space-y-4 mb-4">
+                <div className="text-sm text-zinc-400">请扫描下方二维码支付 <span className="text-white font-bold">¥{selectedPackage.price}</span></div>
+                <div className="w-40 h-40 bg-white mx-auto rounded-lg flex items-center justify-center overflow-hidden relative">
+                  {/* Placeholder QR Code */}
+                  <div className="absolute inset-0 bg-[url('https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=SoraStudioPayment')] bg-center bg-cover opacity-80"></div>
+                  <div className="z-10 bg-white p-1 rounded-sm">
+                    <span className="text-black text-xs font-bold">模拟支付码</span>
+                  </div>
+                </div>
+                <p className="text-xs text-zinc-500">支付完成后请点击下方按钮核销</p>
+              </div>
+            )}
+
+            <button
+              disabled={!selectedPackage || isProcessingPayment}
+              onClick={handleConfirmPayment}
+              className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all shadow-lg shadow-green-900/20"
+            >
+              {isProcessingPayment ? '正在处理...' : '我已支付，立即充值'}
+            </button>
+          </div>
+        </div>
+      )}
+      < AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
         onAuthSuccess={handleAuthSuccess}
       />
-    </div>
+    </div >
   );
 };
 

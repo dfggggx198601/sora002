@@ -1,5 +1,6 @@
 // Backend API Service
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// HARDCODED PRODUCTION URL for troubleshooting
+const API_BASE_URL = 'https://sora-studio-backend-718161097168.us-central1.run.app';
 
 class ApiService {
   private token: string | null = null;
@@ -91,6 +92,13 @@ class ApiService {
     return this.request('/auth/profile');
   }
 
+  async buyQuota(packageId: string) {
+    return this.request('/auth/buy-quota', {
+      method: 'POST',
+      body: JSON.stringify({ packageId })
+    });
+  }
+
   // 任务相关
   async getTasks() {
     return this.request('/tasks');
@@ -131,6 +139,50 @@ class ApiService {
 
   async getQuota() {
     return this.request('/tasks/quota');
+  }
+
+  // 管理员相关
+  async getAdminStats() {
+    return this.request('/admin/stats');
+  }
+
+  async getUsers() {
+    return this.request('/admin/users');
+  }
+
+  async updateUserAdmin(userId: string, updates: any) {
+    return this.request(`/admin/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  }
+
+  async resetUserPassword(userId: string, newPassword: string) {
+    return this.request(`/admin/users/${userId}/password`, {
+      method: 'PUT',
+      body: JSON.stringify({ newPassword }),
+    });
+  }
+
+  async getAdminTasks() {
+    return this.request('/admin/tasks');
+  }
+
+  async deleteAdminTask(taskId: string) {
+    return this.request(`/admin/tasks/${taskId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getSystemSettings() {
+    return this.request('/settings');
+  }
+
+  async updateAdminSettings(settings: any) {
+    return this.request('/admin/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    });
   }
 
   isAuthenticated(): boolean {

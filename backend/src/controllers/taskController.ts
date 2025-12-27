@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth';
 import { TaskModel } from '../models/Task';
 import { UserModel } from '../models/User';
+import { SettingsModel } from '../models/Settings';
 import { StorageService } from '../utils/storage';
 
 // 获取用户所有任务
@@ -19,10 +20,18 @@ export const getTasks = async (req: AuthRequest, res: Response): Promise<void> =
 // 创建新任务
 export const createTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    const { type, prompt, model, imagePreviewUrl } = (req as any).body;
+    const { type, prompt, model, imagePreviewUrl, messages } = (req as any).body;
 
     if (!type || !prompt || !model) {
       res.status(400).json({ error: 'Type, prompt, and model are required' });
+      return;
+    }
+
+    // Check Maintenance Mode
+    const settings = await SettingsModel.getSettings();
+    if (settings.maintenanceMode) { // Check if maintenance mode is enabled
+      // Admin might still bypass? Optional. For now, block everyone.
+      res.status(503).json({ error: 'System is currently in maintenance mode. Please try again later.' });
       return;
     }
 
@@ -69,6 +78,15 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
       return;
     }
 
+    if (type === 'CHAT' && user.quota.chatCount >= (user.quota.dailyChatLimit || 50)) {
+      res.status(429).json({
+        error: 'Daily chat quota exceeded',
+        remaining: 0,
+        limit: user.quota.dailyChatLimit || 50
+      });
+      return;
+    }
+
     // 创建任务
     const task = await TaskModel.create({
       userId: req.userId!,
@@ -77,6 +95,7 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
       modelName: model,
       imagePreviewUrl,
       status: 'GENERATING',
+      messages,
       createdAt: new Date(),
     });
 
@@ -84,8 +103,10 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
     const newQuota = { ...user.quota };
     if (type === 'VIDEO') {
       newQuota.videoCount++;
-    } else {
+    } else if (type === 'IMAGE') {
       newQuota.imageCount++;
+    } else if (type === 'CHAT') {
+      newQuota.chatCount = (newQuota.chatCount || 0) + 1;
     }
     await UserModel.update(user.id!, { quota: newQuota });
 
@@ -100,7 +121,7 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
 export const updateTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { taskId } = (req as any).params;
-    const { status, videoUrl, imageUrl, error } = (req as any).body;
+    const { status, videoUrl, imageUrl, error, messages } = (req as any).body;
 
     const task = await TaskModel.findById(taskId);
 
@@ -125,6 +146,7 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
     }
 
     if (error) updates.error = error;
+    if (messages) updates.messages = messages;
 
     if (status === 'COMPLETED' || status === 'FAILED') {
       updates.completedAt = new Date();

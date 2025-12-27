@@ -20,7 +20,7 @@ class DatabaseService {
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
-        
+
         // Create tasks store
         if (!db.objectStoreNames.contains(STORE_NAME)) {
           const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
@@ -34,7 +34,7 @@ class DatabaseService {
 
   async saveTasks(tasks: GenerationTask[]): Promise<void> {
     if (!this.db) await this.init();
-    
+
     return new Promise((resolve, reject) => {
       const transaction = this.db!.transaction([STORE_NAME], 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
@@ -46,6 +46,13 @@ class DatabaseService {
           videoUrl: task.videoUrl?.startsWith('blob:') ? undefined : task.videoUrl,
           imageUrl: task.imageUrl?.startsWith('blob:') ? undefined : task.imageUrl,
           imagePreviewUrl: task.imagePreviewUrl?.startsWith('blob:') ? undefined : task.imagePreviewUrl,
+          messages: task.messages?.map(msg => ({
+            ...msg,
+            attachments: msg.attachments?.map(att => ({
+              ...att,
+              url: att.url.startsWith('blob:') ? '' : att.url // Don't persist blob URLs
+            }))
+          }))
         };
         store.put(taskToSave);
       });

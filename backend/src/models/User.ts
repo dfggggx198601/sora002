@@ -12,10 +12,13 @@ export interface IUser {
   quota: {
     dailyVideoLimit: number;
     dailyImageLimit: number;
+    dailyChatLimit: number; // Add chat limit
     videoCount: number;
     imageCount: number;
+    chatCount: number; // Add chat count
     lastReset: Date;
   };
+  status?: 'active' | 'banned'; // Add status field
 }
 
 export class UserModel {
@@ -33,8 +36,23 @@ export class UserModel {
         lastReset: Timestamp.fromDate(userData.quota.lastReset),
       },
     });
-    
+
     return { ...userData, id: docRef.id };
+  }
+
+  // 辅助函数：安全地转换 FirestoreTimestamp
+  private static toDateSafe(val: any): Date {
+    if (!val) return new Date();
+    if (typeof val.toDate === 'function') {
+      return val.toDate();
+    }
+    if (typeof val === 'string' || typeof val === 'number') {
+      return new Date(val);
+    }
+    if (val instanceof Date) {
+      return val;
+    }
+    return new Date();
   }
 
   // 根据邮箱查找用户
@@ -44,27 +62,33 @@ export class UserModel {
       .where('email', '==', email.toLowerCase())
       .limit(1)
       .get();
-    
+
     if (snapshot.empty) return null;
-    
+
     const doc = snapshot.docs[0];
     const data = doc.data();
-    
+
+    // Safe Quota Handling
+    const q = data.quota || {};
+
     return {
       id: doc.id,
       email: data.email,
       password: data.password,
       username: data.username,
-      role: data.role || 'user',  // 默认为普通用户
-      createdAt: data.createdAt.toDate(),
-      lastLogin: data.lastLogin?.toDate(),
+      role: data.role || 'user',
+      createdAt: this.toDateSafe(data.createdAt),
+      lastLogin: data.lastLogin ? this.toDateSafe(data.lastLogin) : undefined,
       quota: {
-        dailyVideoLimit: data.quota.dailyVideoLimit,
-        dailyImageLimit: data.quota.dailyImageLimit,
-        videoCount: data.quota.videoCount,
-        imageCount: data.quota.imageCount,
-        lastReset: data.quota.lastReset.toDate(),
+        dailyVideoLimit: q.dailyVideoLimit || 10,
+        dailyImageLimit: q.dailyImageLimit || 50,
+        dailyChatLimit: q.dailyChatLimit || 50,
+        videoCount: q.videoCount || 0,
+        imageCount: q.imageCount || 0,
+        chatCount: q.chatCount || 0,
+        lastReset: this.toDateSafe(q.lastReset),
       },
+      status: data.status || 'active',
     };
   }
 
@@ -72,25 +96,30 @@ export class UserModel {
   static async findById(id: string): Promise<IUser | null> {
     const db = getDB();
     const doc = await db.collection(this.COLLECTION).doc(id).get();
-    
+
     if (!doc.exists) return null;
-    
+
     const data = doc.data()!;
+    const q = data.quota || {};
+
     return {
       id: doc.id,
       email: data.email,
       password: data.password,
       username: data.username,
-      role: data.role || 'user',  // 默认为普通用户
-      createdAt: data.createdAt.toDate(),
-      lastLogin: data.lastLogin?.toDate(),
+      role: data.role || 'user',
+      createdAt: this.toDateSafe(data.createdAt),
+      lastLogin: data.lastLogin ? this.toDateSafe(data.lastLogin) : undefined,
       quota: {
-        dailyVideoLimit: data.quota.dailyVideoLimit,
-        dailyImageLimit: data.quota.dailyImageLimit,
-        videoCount: data.quota.videoCount,
-        imageCount: data.quota.imageCount,
-        lastReset: data.quota.lastReset.toDate(),
+        dailyVideoLimit: q.dailyVideoLimit || 10,
+        dailyImageLimit: q.dailyImageLimit || 50,
+        dailyChatLimit: q.dailyChatLimit || 50,
+        videoCount: q.videoCount || 0,
+        imageCount: q.imageCount || 0,
+        chatCount: q.chatCount || 0,
+        lastReset: this.toDateSafe(q.lastReset),
       },
+      status: data.status || 'active',
     };
   }
 
@@ -98,7 +127,7 @@ export class UserModel {
   static async update(id: string, updates: Partial<IUser>): Promise<void> {
     const db = getDB();
     const updateData: any = { ...updates };
-    
+
     // 转换日期为 Timestamp
     if (updateData.createdAt) {
       updateData.createdAt = Timestamp.fromDate(updateData.createdAt);
@@ -109,7 +138,7 @@ export class UserModel {
     if (updateData.quota?.lastReset) {
       updateData.quota.lastReset = Timestamp.fromDate(updateData.quota.lastReset);
     }
-    
+
     await db.collection(this.COLLECTION).doc(id).update(updateData);
   }
 

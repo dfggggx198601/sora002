@@ -4,18 +4,21 @@ import { TaskType } from '../types';
 interface QuotaConfig {
   dailyVideoLimit: number;
   dailyImageLimit: number;
+  dailyChatLimit: number;
   maxConcurrentTasks: number;
 }
 
 interface UsageStats {
   videoCount: number;
   imageCount: number;
+  chatCount: number;
   lastReset: number;
 }
 
 const DEFAULT_QUOTA: QuotaConfig = {
   dailyVideoLimit: 10,
   dailyImageLimit: 50,
+  dailyChatLimit: 50,
   maxConcurrentTasks: 3,
 };
 
@@ -34,15 +37,19 @@ class QuotaService {
     try {
       const stored = localStorage.getItem(this.STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        // Ensure chatCount exists for legacy data
+        if (parsed.chatCount === undefined) parsed.chatCount = 0;
+        return parsed;
       }
     } catch (e) {
       console.error('Failed to load usage stats:', e);
     }
-    
+
     return {
       videoCount: 0,
       imageCount: 0,
+      chatCount: 0,
       lastReset: Date.now(),
     };
   }
@@ -58,11 +65,12 @@ class QuotaService {
   private checkAndResetDaily() {
     const now = Date.now();
     const dayInMs = 24 * 60 * 60 * 1000;
-    
+
     if (now - this.usage.lastReset > dayInMs) {
       this.usage = {
         videoCount: 0,
         imageCount: 0,
+        chatCount: 0,
         lastReset: now,
       };
       this.saveUsage();
@@ -71,39 +79,50 @@ class QuotaService {
 
   canGenerate(type: TaskType): boolean {
     this.checkAndResetDaily();
-    
+
     if (type === 'VIDEO') {
       return this.usage.videoCount < this.quota.dailyVideoLimit;
-    } else {
+    } else if (type === 'IMAGE') {
       return this.usage.imageCount < this.quota.dailyImageLimit;
+    } else if (type === 'CHAT') {
+      return this.usage.chatCount < this.quota.dailyChatLimit;
     }
+    return false;
   }
 
   incrementUsage(type: TaskType) {
     if (type === 'VIDEO') {
       this.usage.videoCount++;
-    } else {
+    } else if (type === 'IMAGE') {
       this.usage.imageCount++;
+    } else if (type === 'CHAT') {
+      this.usage.chatCount++;
     }
     this.saveUsage();
   }
 
   getRemainingQuota(type: TaskType): number {
     this.checkAndResetDaily();
-    
+
     if (type === 'VIDEO') {
       return Math.max(0, this.quota.dailyVideoLimit - this.usage.videoCount);
-    } else {
+    } else if (type === 'IMAGE') {
       return Math.max(0, this.quota.dailyImageLimit - this.usage.imageCount);
+    } else if (type === 'CHAT') {
+      return Math.max(0, this.quota.dailyChatLimit - this.usage.chatCount);
     }
+    return 0;
   }
 
-  getUsageStats(): UsageStats & { videoLimit: number; imageLimit: number } {
+  getUsageStats(): any { // Returning any to match implicit QuotaStats roughly or defined interface
     this.checkAndResetDaily();
     return {
       ...this.usage,
-      videoLimit: this.quota.dailyVideoLimit,
-      imageLimit: this.quota.dailyImageLimit,
+      dailyVideoLimit: this.quota.dailyVideoLimit,
+      dailyImageLimit: this.quota.dailyImageLimit,
+      dailyChatLimit: this.quota.dailyChatLimit,
+      videoLimit: this.quota.dailyVideoLimit, // Legacy alias
+      imageLimit: this.quota.dailyImageLimit, // Legacy alias
     };
   }
 
@@ -111,9 +130,20 @@ class QuotaService {
     return this.quota.maxConcurrentTasks;
   }
 
-  // 管理员功能：设置配额
+  // 管理员/后端同步功能：设置配额
   setQuota(newQuota: Partial<QuotaConfig>) {
     this.quota = { ...this.quota, ...newQuota };
+  }
+
+  // 同步后端使用量 (重要：覆盖本地使用量)
+  syncUsage(stats: { videoCount: number; imageCount: number; chatCount: number; lastReset?: Date | number }) {
+    this.usage.videoCount = stats.videoCount;
+    this.usage.imageCount = stats.imageCount;
+    this.usage.chatCount = stats.chatCount || 0;
+    if (stats.lastReset) {
+      this.usage.lastReset = typeof stats.lastReset === 'number' ? stats.lastReset : new Date(stats.lastReset).getTime();
+    }
+    this.saveUsage();
   }
 
   // 重置今日配额（仅用于测试）
@@ -121,6 +151,7 @@ class QuotaService {
     this.usage = {
       videoCount: 0,
       imageCount: 0,
+      chatCount: 0,
       lastReset: Date.now(),
     };
     this.saveUsage();

@@ -14,6 +14,7 @@ export interface ITask {
   imageUrl?: string;
   imagePreviewUrl?: string;
   error?: string;
+  messages?: any[]; // Store chat messages
 }
 
 export class TaskModel {
@@ -183,6 +184,7 @@ export class TaskModel {
       imageUrl: data.imageUrl,
       imagePreviewUrl: data.imagePreviewUrl,
       error: data.error,
+      messages: data.messages,
     };
   }
 }

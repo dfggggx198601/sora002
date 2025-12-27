@@ -6,13 +6,34 @@ export enum GenerationStatus {
   FAILED = 'FAILED'          // 失败
 }
 
-export type TaskType = 'VIDEO' | 'IMAGE';
+export type TaskType = 'VIDEO' | 'IMAGE' | 'CHAT';
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  content: string;
+  timestamp: number;
+  attachments?: {
+    type: 'image';
+    url: string; // Base64 or Blob URL
+    mimeType?: string;
+  }[];
+  isGenerating?: boolean; // For UI loading state
+  toolCall?: {
+    id: string;
+    name: string;
+    args: any;
+  };
+  toolResult?: {
+    id: string; // Must match toolCall.id
+    result: any;
+  };
+}
 
 export interface GenerationTask {
   id: string;
-  type: TaskType; // 任务类型：视频 或 图片
+  type: TaskType; // 任务类型：视频 或 图片 或 对话
   status: GenerationStatus;
-  prompt: string;
+  prompt: string; // For CHAT, this can range or be the title
   model: string;
   createdAt: number;
   completedAt?: number; // 完成或失败的时间戳
@@ -20,6 +41,7 @@ export interface GenerationTask {
   imageUrl?: string; // 完成后才有 (图片任务)
   error?: string;    // 失败后才有
   imagePreviewUrl?: string; // 如果是图生视频，保存图片的预览链接
+  messages?: ChatMessage[]; // Chat history for CHAT tasks
 }
 
 export interface GenerationConfig {
@@ -40,12 +62,14 @@ export interface AppSettings extends CustomApiConfig {
 }
 export interface QuotaStats {
   videoCount: number;
-  videoLimit: number;
   imageCount: number;
-  imageLimit: number;
+  chatCount: number;
   dailyVideoLimit: number;
   dailyImageLimit: number;
+  dailyChatLimit: number;
   lastReset: string | number | Date;
+  videoLimit?: number; // compat
+  imageLimit?: number; // compat
 }
 
 export interface UserProfile {
@@ -54,4 +78,32 @@ export interface UserProfile {
   email: string;
   role: string;
   quota: QuotaStats;
+  status: 'active' | 'banned';
+}
+
+export interface AppAnnouncement {
+  message: string;
+  enabled: boolean;
+  type: 'info' | 'warning' | 'error';
+}
+
+export interface PaymentPackage {
+  id: string;
+  name: string;
+  price: number;
+  videoIncrease: number;
+  imageIncrease: number;
+  chatIncrease: number;
+}
+
+export interface SystemSettings {
+  announcement: AppAnnouncement;
+  maintenanceMode: boolean;
+  initialQuota?: {
+    dailyVideoLimit: number;
+    dailyImageLimit: number;
+    dailyChatLimit: number;
+  };
+  paymentPackages?: PaymentPackage[];
+  updatedAt: string;
 }

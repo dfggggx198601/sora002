@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { register, login, getProfile } from '../controllers/authController';
+import { register, login, getProfile, buyQuota } from '../controllers/authController';
 import authMiddleware from '../middleware/auth';
 
 const router = Router();
@@ -10,5 +10,6 @@ router.post('/login', login);
 
 // 受保护路由
 router.get('/profile', authMiddleware, getProfile);
+router.post('/buy-quota', authMiddleware, buyQuota);
 
 export default router;
