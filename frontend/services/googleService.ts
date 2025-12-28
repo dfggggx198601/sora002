@@ -307,7 +307,7 @@ export const generateWithChat = async (options: ChatOptions) => {
   console.log("Gemini Chat Response:", JSON.stringify(result, null, 2));
 
   // Robust handling: simpler SDKs may return the response object directly
-  const response = result.response || result;
+  const response = (result as any).response || result;
 
   let toolCall = undefined;
   let text = "";

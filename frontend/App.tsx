@@ -2,6 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   GenerationConfig, GenerationTask, GenerationStatus, AppSettings, UserProfile, QuotaStats, AppAnnouncement, SystemSettings, PaymentPackage
 } from './types';
+import { useIsMobile } from './hooks/useIsMobile';
+
+// ... (existing imports, no change needed usually, but I need to make sure I don't break them)
+
 import { DEFAULT_CUSTOM_CONFIG } from './constants';
 import { generateWithCustomApi } from './services/customService';
 import { generateImageWithGoogle } from './services/googleService';
@@ -23,7 +27,7 @@ import { AdminOrders } from './components/AdminOrders';
 
 
 // 添加 Admin Tab 类型
-type AdminTab = 'dashboard' | 'users' | 'content' | 'settings';
+type AdminTab = 'dashboard' | 'users' | 'content' | 'orders' | 'settings';
 
 const App = () => {
   // --- State ---
@@ -33,6 +37,10 @@ const App = () => {
   const [apiKey, setApiKey] = useState<string>(localStorage.getItem('google_api_key') || '');
   const [showConfig, setShowConfig] = useState(false);
   const [activeTab, setActiveTab] = useState<'video' | 'image' | 'chat'>('video');
+
+  // Mobile Support
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<'create' | 'history' | 'profile'>('create');
 
   // 认证状态
   const [isAuthenticated, setIsAuthenticated] = useState(apiService.isAuthenticated());
@@ -64,7 +72,7 @@ const App = () => {
 
   // Admin State
   const [isAdminMode, setIsAdminMode] = useState(false);
-  const [adminTab, setAdminTab] = useState<'dashboard' | 'users' | 'content'>('dashboard');
+  const [adminTab, setAdminTab] = useState<AdminTab>('dashboard');
 
   // Payment State
   const [showBuyQuotaModal, setShowBuyQuotaModal] = useState(false);
@@ -863,6 +871,325 @@ const App = () => {
         {adminTab === 'orders' && <AdminOrders />}
         {adminTab === 'settings' && <AdminSettings />}
       </AdminLayout>
+    );
+  }
+
+  if (isMobile) {
+    return (
+      <div className="flex flex-col h-screen bg-black text-zinc-100 font-sans overflow-hidden select-none">
+
+        {/* --- Mobile Header --- */}
+        <header className="h-14 px-4 border-b border-zinc-900 bg-zinc-950 flex items-center justify-between z-20">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-purple-900/20">
+              <SparklesIcon className="text-white w-4 h-4" />
+            </div>
+            <h1 className="font-bold text-base tracking-tight">Sora Studio</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            {!isGoogleConnected && (
+              <button onClick={handleConnectGoogle} className="text-xs px-2 py-1 bg-zinc-800 rounded border border-zinc-700 text-zinc-400">
+                连接 Key
+              </button>
+            )}
+            {isAuthenticated ? (
+              <div className="w-8 h-8 rounded-full bg-purple-900/50 border border-purple-500/30 flex items-center justify-center text-xs font-bold text-purple-200">
+                {userProfile?.username?.[0] || 'U'}
+              </div>
+            ) : (
+              <button onClick={() => setShowAuthModal(true)} className="text-xs bg-purple-600 text-white px-3 py-1.5 rounded-full">
+                登录
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* --- Mobile Content Area --- */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden bg-black relative pb-20 scroll-smooth">
+
+          {/* Tab: Create */}
+          {mobileTab === 'create' && (
+            <div className="p-4 space-y-6 pb-24">
+              {/* Mode Switcher */}
+              <div className="flex p-1 bg-zinc-900 rounded-xl border border-zinc-800">
+                <button onClick={() => setActiveTab('video')} className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all ${activeTab === 'video' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500'}`}>
+                  <VideoIcon className="w-3.5 h-3.5" /> 视频
+                </button>
+                <button onClick={() => setActiveTab('image')} className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all ${activeTab === 'image' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500'}`}>
+                  <ImageIcon className="w-3.5 h-3.5" /> 图片
+                </button>
+                <button onClick={() => setActiveTab('chat')} className={`flex-1 py-2 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-all ${activeTab === 'chat' ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500'}`}>
+                  <ChatIcon className="w-3.5 h-3.5" /> 对话
+                </button>
+              </div>
+
+              {/* --- VIDEO CREATION FORM --- */}
+              {activeTab === 'video' && (
+                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-400">提示词 (Prompt)</label>
+                    <textarea
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl p-3 text-sm min-h-[120px] focus:outline-none focus:border-purple-500 transition-colors placeholder-zinc-700"
+                      placeholder="描述您想生成的视频..."
+                      value={prompt}
+                      onChange={e => setPrompt(e.target.value)}
+                    />
+                  </div>
+
+                  {/* Image Selector UI for Mobile */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-400">参考图 (可选)</label>
+                    {selectedImage ? (
+                      <div className="relative rounded-xl overflow-hidden border border-purple-500/30">
+                        <img src={URL.createObjectURL(selectedImage)} className="w-full h-32 object-cover" />
+                        <button onClick={clearImage} className="absolute top-2 right-2 bg-black/60 text-white p-1 rounded-full"><TrashIcon className="w-4 h-4" /></button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button onClick={() => fileInputRef.current?.click()} className="flex-1 py-3 border border-dashed border-zinc-700 hover:bg-zinc-900 rounded-xl text-xs text-zinc-400 flex flex-col items-center justify-center gap-1">
+                          <UploadIcon className="w-4 h-4" /> 上传图片
+                        </button>
+                        <button onClick={() => setIsRefImageMode(!isRefImageMode)} className="flex-1 py-3 border border-dashed border-zinc-700 hover:bg-zinc-900 rounded-xl text-xs text-purple-400 flex flex-col items-center justify-center gap-1">
+                          <SparklesIcon className="w-4 h-4" /> AI 生成
+                        </button>
+                      </div>
+                    )}
+                    {/* Hidden Input */}
+                    <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImageSelect} />
+
+                    {/* AI Ref Gen Mobile UI */}
+                    {isRefImageMode && !selectedImage && (
+                      <div className="bg-zinc-900 rounded-xl p-3 space-y-2 border border-purple-500/20 mt-2">
+                        <input
+                          value={refImagePrompt} onChange={e => setRefImagePrompt(e.target.value)}
+                          className="w-full bg-black border border-zinc-800 rounded px-2 py-2 text-xs" placeholder="图片描述..."
+                        />
+                        <button onClick={handleGenerateRefImage} disabled={isGeneratingRefImage} className="w-full py-2 bg-purple-600 rounded-lg text-xs font-bold text-white">
+                          {isGeneratingRefImage ? '生成中...' : '生成参考图'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-400">模型</label>
+                    <select value={selectedModel} onChange={e => setSelectedModel(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white">
+                      {videoModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </div>
+
+                  <button onClick={handleGenerateVideo} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 rounded-xl text-sm font-bold text-white shadow-lg shadow-purple-900/30 active:scale-[0.98] transition-all">
+                    开始生成视频
+                  </button>
+                </div>
+              )}
+
+              {/* --- IMAGE CREATION FORM --- */}
+              {activeTab === 'image' && (
+                <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-zinc-400">图片描述</label>
+                    <textarea
+                      className="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl p-3 text-sm min-h-[140px] focus:outline-none focus:border-pink-500 transition-colors placeholder-zinc-700"
+                      placeholder="一只在雨中漫步的赛博朋克猫..."
+                      value={standaloneImagePrompt}
+                      onChange={e => setStandaloneImagePrompt(e.target.value)}
+                    />
+                  </div>
+                  <button onClick={handleGenerateStandaloneImage} className="w-full py-3 bg-gradient-to-r from-pink-600 to-rose-600 rounded-xl text-sm font-bold text-white shadow-lg shadow-pink-900/30 active:scale-[0.98] transition-all">
+                    开始生成图片
+                  </button>
+                </div>
+              )}
+
+              {/* --- CHAT FORM --- */}
+              {activeTab === 'chat' && (
+                <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                  <div className="p-4 bg-zinc-900/50 rounded-full">
+                    <ChatIcon className="w-8 h-8 text-indigo-400" />
+                  </div>
+                  <p className="text-xs text-zinc-500">Gemini 1.5 Pro</p>
+                  <button onClick={handleNewChat} className="px-6 py-2 bg-indigo-600 rounded-full text-sm font-bold shadow-lg shadow-indigo-900/20 active:scale-95 transition-all">
+                    新建对话
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab: History (Tasks) */}
+          {mobileTab === 'history' && (
+            <div className="p-4 space-y-3 pb-24 min-h-screen">
+              <h2 className="text-lg font-bold">创作历史</h2>
+              {tasks.length === 0 ? (
+                <div className="text-center py-20 text-zinc-600 text-sm">暂无记录</div>
+              ) : (
+                tasks.map(task => (
+                  <div key={task.id}
+                    onClick={() => { setActiveTaskId(task.id); /* Maybe open full view? */ }}
+                    className="bg-zinc-900 rounded-xl p-3 border border-zinc-800 flex gap-3 relative overflow-hidden"
+                  >
+                    {/* Thumbnail */}
+                    <div className="w-20 h-20 bg-black rounded-lg flex-shrink-0 overflow-hidden border border-zinc-800">
+                      {(task.status === GenerationStatus.COMPLETED) ? (
+                        (task.type === 'VIDEO' && task.videoUrl) ? (
+                          <video src={task.videoUrl} className="w-full h-full object-cover" muted loop playsInline />
+                        ) : (
+                          <img src={task.imageUrl || task.imagePreviewUrl} className="w-full h-full object-cover" />
+                        )
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-zinc-800">
+                          {task.status === GenerationStatus.GENERATING ? <div className="w-4 h-4 border-2 border-purple-500 rounded-full animate-spin border-t-transparent" /> : <span className="text-xs text-red-500">!</span>}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0 flex flex-col justify-center">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${task.type === 'VIDEO' ? 'bg-purple-900/30 border-purple-700 text-purple-300' : 'bg-pink-900/30 border-pink-700 text-pink-300'}`}>{task.type}</span>
+                        <span className="text-[10px] text-zinc-500">{new Date(task.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">{task.prompt}</p>
+                    </div>
+
+                    {/* Full Screen View trigger (rudimentary) */}
+                    {task.id === activeTaskId && task.status === GenerationStatus.COMPLETED && (
+                      <div className="fixed inset-0 z-50 bg-black flex flex-col animate-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-center p-4 bg-zinc-900/80 backdrop-blur">
+                          <h3 className="font-bold text-sm">预览</h3>
+                          <button onClick={(e) => { e.stopPropagation(); setActiveTaskId(null); }} className="text-zinc-500 p-2 text-xl">✕</button>
+                        </div>
+                        <div className="flex-1 flex items-center justify-center p-4 bg-black/50">
+                          {task.type === 'VIDEO' ? (
+                            <video src={task.videoUrl} controls autoPlay className="max-w-full max-h-[80vh] rounded-lg shadow-2xl" />
+                          ) : (
+                            <img src={task.imageUrl} className="max-w-full max-h-[80vh] rounded-lg shadow-2xl" />
+                          )}
+                        </div>
+                        <div className="p-4 bg-zinc-900 space-y-2 safe-area-bottom">
+                          <a href={task.type === 'VIDEO' ? task.videoUrl : task.imageUrl} download className="block w-full text-center py-3 bg-white text-black font-bold rounded-lg text-sm">下载文件</a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Tab: Profile */}
+          {mobileTab === 'profile' && (
+            <div className="p-4 space-y-6 pb-24">
+              {isAuthenticated ? (
+                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 text-center space-y-2">
+                  <div className="w-16 h-16 bg-purple-600 rounded-full mx-auto flex items-center justify-center text-xl font-bold text-white shadow-lg shadow-purple-900/50">
+                    {userProfile?.username?.[0] || 'U'}
+                  </div>
+                  <h2 className="text-xl font-bold text-white">{userProfile?.username}</h2>
+                  <p className="text-zinc-500 text-sm">{userProfile?.email}</p>
+                  <button onClick={handleLogout} className="text-xs text-red-500 py-2">退出登录</button>
+                </div>
+              ) : (
+                <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-8 text-center space-y-4">
+                  <div className="w-16 h-16 bg-zinc-800 rounded-full mx-auto flex items-center justify-center">
+                    <SettingsIcon className="w-8 h-8 text-zinc-600" />
+                  </div>
+                  <p className="text-zinc-400 text-sm">登录以保存您的作品并同步多端数据</p>
+                  <button onClick={() => setShowAuthModal(true)} className="w-full py-3 bg-white text-black font-bold rounded-xl text-sm">
+                    立即登录
+                  </button>
+                </div>
+              )}
+
+              <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 space-y-3">
+                <h3 className="text-sm font-bold text-zinc-300">今日配额</h3>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-black rounded-lg p-2 text-center border border-zinc-800">
+                    <div className="text-xs text-zinc-500 mb-1">视频</div>
+                    <div className="text-sm font-bold text-purple-400">{quotaStats.videoCount}/{quotaStats.videoLimit}</div>
+                  </div>
+                  <div className="bg-black rounded-lg p-2 text-center border border-zinc-800">
+                    <div className="text-xs text-zinc-500 mb-1">图片</div>
+                    <div className="text-sm font-bold text-pink-400">{quotaStats.imageCount}/{quotaStats.imageLimit}</div>
+                  </div>
+                  <div className="bg-black rounded-lg p-2 text-center border border-zinc-800">
+                    <div className="text-xs text-zinc-500 mb-1">对话</div>
+                    <div className="text-sm font-bold text-indigo-400">{quotaStats.chatCount}/{quotaStats.dailyChatLimit || 50}</div>
+                  </div>
+                </div>
+                <button onClick={() => setShowBuyQuotaModal(true)} className="w-full py-2 bg-gradient-to-r from-amber-600/20 to-orange-600/20 text-amber-500 text-xs font-bold rounded-lg border border-amber-600/30 flex items-center justify-center gap-1">
+                  <span>⚡️</span> 购买加油包
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <button onClick={() => setShowConfig(true)} className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl text-sm text-zinc-300">
+                  <span>Google 设置 (API Key)</span>
+                  <span className="text-zinc-500">Access &gt;</span>
+                </button>
+                <a href="https://github.com/dfggggx198601/sora002" target="_blank" className="w-full flex items-center justify-between p-4 bg-zinc-900 rounded-xl text-sm text-zinc-300">
+                  <span>GitHub</span>
+                  <span className="text-zinc-500">v0.22</span>
+                </a>
+              </div>
+
+              <div className="text-center text-[10px] text-zinc-700 pt-6">
+                Sora Studio Mobile v0.2.2
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* --- Bottom Navigation --- */}
+        <div className="fixed bottom-0 left-0 right-0 h-[80px] bg-black/90 backdrop-blur-xl border-t border-zinc-800 flex items-start justify-around pt-3 z-30 safe-area-bottom pb-4">
+          <button onClick={() => setMobileTab('create')} className={`flex flex-col items-center gap-1 w-16 ${mobileTab === 'create' ? 'text-white' : 'text-zinc-600'}`}>
+            <div className={`p-1.5 rounded-full transition-all ${mobileTab === 'create' ? 'bg-purple-600 shadow-lg shadow-purple-900/40' : ''}`}>
+              <PlusIcon className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] font-medium">创作</span>
+          </button>
+
+          <button onClick={() => setMobileTab('history')} className={`flex flex-col items-center gap-1 w-16 ${mobileTab === 'history' ? 'text-white' : 'text-zinc-600'}`}>
+            <HistoryIcon className={`w-5 h-5 transition-all ${mobileTab === 'history' ? 'scale-110' : ''}`} />
+            <span className="text-[10px] font-medium">历史</span>
+          </button>
+
+          <button onClick={() => setMobileTab('profile')} className={`flex flex-col items-center gap-1 w-16 ${mobileTab === 'profile' ? 'text-white' : 'text-zinc-600'}`}>
+            <SettingsIcon className={`w-5 h-5 transition-all ${mobileTab === 'profile' ? 'scale-110' : ''}`} />
+            <span className="text-[10px] font-medium">我的</span>
+          </button>
+        </div>
+
+        {/* --- Shared Modals (Auth, Quota, etc) --- */}
+        <AuthModal isOpen={showAuthModal} onClose={() => setShowAuthModal(false)} onAuthSuccess={handleAuthSuccess} />
+        {showBuyQuotaModal && (
+          <div className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4">
+            <div className="bg-zinc-900 w-full max-w-sm rounded-2xl p-6 border border-zinc-800 relative">
+              <button onClick={() => setShowBuyQuotaModal(false)} className="absolute top-4 right-4 text-zinc-500 text-xl">✕</button>
+              <h3 className="text-lg font-bold text-white mb-4">购买加油包</h3>
+              {/* Reusing existing logic but simplified visual */}
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+                {paymentPackages.map(pkg => (
+                  <button key={pkg.id} onClick={() => setSelectedPackage(pkg)} className={`w-full p-3 rounded-lg border text-left flex justify-between ${selectedPackage?.id === pkg.id ? 'bg-purple-900/20 border-purple-500' : 'bg-black border-zinc-800'}`}>
+                    <div>
+                      <div className="text-sm font-bold text-white">{pkg.name}</div>
+                      <div className="text-xs text-zinc-500">¥{pkg.price}</div>
+                    </div>
+                    {selectedPackage?.id === pkg.id && <span className="text-purple-500 text-xs">Selected</span>}
+                  </button>
+                ))}
+              </div>
+              {selectedPackage && (
+                <button onClick={() => handleConfirmPayment('manual')} className="w-full mt-4 py-3 bg-white text-black font-bold rounded-xl text-sm">
+                  {isProcessingPayment ? '处理中...' : `支付 ¥${selectedPackage.price}`}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     );
   }
 

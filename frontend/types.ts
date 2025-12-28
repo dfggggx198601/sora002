@@ -105,5 +105,19 @@ export interface SystemSettings {
     dailyChatLimit: number;
   };
   paymentPackages?: PaymentPackage[];
+  paymentConfig?: {
+    enabled: boolean;
+    provider: 'manual' | 'epay';
+    manualQrCodeUrl?: string;
+    epayApiUrl?: string;
+    epayPid?: string;
+    epayKey?: string;
+  };
+  aiConfig?: {
+    enabled: boolean;
+    googleKeys: string[];
+    baseUrl?: string;
+    apiKey?: string;
+  };
   updatedAt: string;
 }
