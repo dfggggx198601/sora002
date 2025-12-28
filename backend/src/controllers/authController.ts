@@ -74,11 +74,13 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 };
 
 // 购买/充值配额 (模拟支付)
+// 购买/充值配额 (支持多种支付方式)
 export const buyQuota = async (req: Request & { userId?: string }, res: Response): Promise<void> => {
   try {
-    const { packageId } = req.body;
+    const { packageId, provider = 'manual' } = req.body;
     const settings = await SettingsModel.getSettings();
 
+    // 1. Validate Package
     const pkg = settings.paymentPackages?.find(p => p.id === packageId);
     if (!pkg) {
       res.status(404).json({ error: 'Package not found' });
@@ -91,31 +93,53 @@ export const buyQuota = async (req: Request & { userId?: string }, res: Response
       return;
     }
 
-    // 逻辑：购买通过减少已使用次数来实现"增加配额" (Top-up logic)
-    // 例如：已用10次，购买增加3次 -> 已用变为 7次 -> 还可以用3次
-    const newQuota = { ...user.quota };
+    // 2. Determine Payment Provider
+    const configProvider = settings.paymentConfig?.provider || 'manual';
+    const isManual = configProvider === 'manual';
 
-    // 确保不会减成负数过大，虽然负数在逻辑上是可以表示"存储的额外次数"
-    // 这里允许负数，表示用户即使明天重置了，今天买的额外次数可能就浪费了？
-    // 不，我们的重置只有在 checkAndResetDaily 时发生。
-    // 如果用户买了很多，videoCount 变成 -100。
-    // 明天重置为 0。那用户买的就没了。
-    // 因此，更好的方式是：如果支持跨天累积，需要单独字段。
-    // 但为了简单 MVP，我们假设用户是"当天充值当天用"。
-    // 或者，我们简单地增加 dailyLimit？不，那会永久增加。
-    // 为了满足"充值增加次数"，最安全的 MVP 是减少 count。
-    // 告知用户：充值的额度仅限今日有效 (或者直到下次重置)。
+    // 3. Create Order
+    const { OrderModel } = await import('../models/Order'); // Dynamic import to avoid circular dependency issues if any
+    const { v4: uuidv4 } = await import('uuid');
 
-    newQuota.videoCount = Math.max(-9999, newQuota.videoCount - pkg.videoIncrease);
-    newQuota.imageCount = Math.max(-9999, newQuota.imageCount - pkg.imageIncrease);
-    newQuota.chatCount = Math.max(-9999, newQuota.chatCount - pkg.chatIncrease);
-
-    await UserModel.update(user.id!, { quota: newQuota });
-
-    res.json({
-      message: 'Purchase successful',
-      quota: newQuota
+    const orderId = uuidv4();
+    const order = await OrderModel.create({
+      id: orderId,
+      userId: user.id!,
+      packageId: pkg.id,
+      packageSnapshot: pkg,
+      amount: pkg.price,
+      status: 'pending',
+      paymentMethod: isManual ? 'manual' : 'epay',
+      createdAt: new Date()
     });
+
+    // 4. Handle Different Providers
+    if (isManual) {
+      // Manual: Just return the order info, frontend tells user to wait
+      res.status(200).json({
+        message: 'Order created',
+        orderId: order.id,
+        status: 'pending',
+        paymentMethod: 'manual',
+        paymentUrl: settings.paymentConfig?.manualQrCodeUrl // Optional, frontend might already have it
+      });
+      return;
+    } else {
+      // Epay: Generate Pay URL (To be implemented fully later, for now we just log it)
+      // Construct Epay params...
+      // Return URL to frontend
+      const payUrl = `${settings.paymentConfig?.epayApiUrl}submit.php?pid=${settings.paymentConfig?.epayPid}&...`;
+      // For MVP of this step, we just return order created.
+      res.status(200).json({
+        message: 'Order created',
+        orderId: order.id,
+        status: 'pending',
+        paymentMethod: 'epay'
+        // paymentUrl: payUrl 
+      });
+      return;
+    }
+
   } catch (error) {
     console.error('Buy quota error:', error);
     res.status(500).json({ error: 'Transaction failed' });

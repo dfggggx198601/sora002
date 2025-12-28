@@ -403,6 +403,76 @@ export const AdminSettings = () => {
                 </div>
             </div>
 
+            {/* AI Configuration Section */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
+                <div className="flex items-center justify-between mb-4">
+                    <div>
+                        <h3 className="text-lg font-medium text-white">AI 模型池配置</h3>
+                        <p className="text-sm text-zinc-500">配置 Google Gemin/Sora API Keys，系统将自动轮询使用。</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={settings.aiConfig?.enabled || false}
+                            onChange={(e) => setSettings({
+                                ...settings,
+                                aiConfig: {
+                                    ...(settings.aiConfig || { googleKeys: [] }),
+                                    enabled: e.target.checked
+                                }
+                            })}
+                        />
+                        <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                    </label>
+                </div>
+
+                {settings.aiConfig?.enabled && (
+                    <div className="space-y-4 p-4 bg-zinc-950 rounded-lg border border-zinc-800">
+                        <div>
+                            <label className="block text-sm text-zinc-400 mb-2">Google Gemini Keys (一行一个)</label>
+                            <div className="text-xs text-orange-400 mb-2 border border-orange-500/20 bg-orange-500/10 p-2 rounded">
+                                ⚠️ 警告：请务必在此配置 API Key。GitHub 上泄漏的 Key 已经被撤销。
+                            </div>
+                            <textarea
+                                rows={8}
+                                value={settings.aiConfig?.googleKeys?.join('\n') || ''}
+                                onChange={(e) => {
+                                    const keys = e.target.value.split('\n').map(k => k.trim()).filter(k => k !== '');
+                                    setSettings({
+                                        ...settings,
+                                        aiConfig: { ...settings.aiConfig!, googleKeys: keys }
+                                    });
+                                }}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-zinc-300 font-mono text-sm outline-none resize-y"
+                                placeholder={`AIzaSy...\nAIzaSy...`}
+                            />
+                            <p className="text-xs text-zinc-500 mt-2">
+                                当前已配置 {settings.aiConfig?.googleKeys?.length || 0} 个 Key。系统将在请求时随机选择以分散负载。
+                                (视频生成服务暂不使用此池，仍使用独立配置)
+                            </p>
+                        </div>
+
+                        <div className="pt-4 border-t border-zinc-900">
+                            <label className="block text-sm text-zinc-400 mb-2">API Base URL (可选)</label>
+                            <input
+                                type="text"
+                                value={settings.aiConfig?.baseUrl || ''}
+                                onChange={(e) => setSettings({
+                                    ...settings,
+                                    aiConfig: { ...settings.aiConfig!, baseUrl: e.target.value }
+                                })}
+                                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-zinc-300 font-mono text-sm outline-none"
+                                placeholder="例如: https://my-custom-proxy.com (留空则默认使用 Google 官方)"
+                            />
+                            <p className="text-xs text-zinc-500 mt-1">
+                                如果您使用第三方中转服务（如 OneAPI），请在此填写中转地址。
+                            </p>
+                        </div>
+                    </div>
+                )}
+            </div>
+
             {/* Maintenance Mode */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
                 <h3 className="text-lg font-medium text-white flex items-center gap-2">

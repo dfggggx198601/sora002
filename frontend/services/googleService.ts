@@ -151,6 +151,85 @@ interface ChatOptions {
   model?: string;
 }
 
+export const prepareGeminiHistory = (history: ChatMessage[]): any[] => {
+  const historyContents: any[] = [];
+
+  for (const msg of history) {
+    // 1. User Message
+    if (msg.role === 'user') {
+      const parts: any[] = [];
+      if (msg.content) parts.push({ text: msg.content });
+
+      // Handle Attachments
+      if (msg.attachments) {
+        for (const att of msg.attachments) {
+          if (att.url.startsWith('data:')) {
+            const base64Data = att.url.split(',')[1];
+            const mimeType = att.url.split(';')[0].split(':')[1];
+            parts.push({
+              inlineData: { mimeType: mimeType, data: base64Data }
+            });
+          }
+        }
+      }
+
+      historyContents.push({ role: 'user', parts });
+    }
+
+    // 2. Model Message (Text or Tool Call)
+    if (msg.role === 'model') {
+      // If this message initiated a tool call
+      if (msg.toolCall) {
+        // Function call should be in its own turn, without text
+        const functionCallParts = [{
+          functionCall: {
+            name: msg.toolCall.name,
+            args: msg.toolCall.args
+          }
+        }];
+
+        // Push the MODEL turn with ONLY the function call
+        historyContents.push({ role: 'model', parts: functionCallParts });
+
+        // 3. Immediate Tool Result Turn (USER role in Gemini)
+        if (msg.toolResult) {
+          let sanitizedResult = msg.toolResult.result;
+
+          // Check if result has imageUrl and it's a data URL
+          if (sanitizedResult && typeof sanitizedResult === 'object' && sanitizedResult.imageUrl && typeof sanitizedResult.imageUrl === 'string' && sanitizedResult.imageUrl.startsWith('data:')) {
+            // Create a copy and replace imageUrl with a placeholder
+            sanitizedResult = {
+              ...sanitizedResult,
+              imageUrl: "<Image Data Omitted for Context Efficiency>"
+            };
+          }
+
+          historyContents.push({
+            role: 'user',
+            parts: [{
+              functionResponse: {
+                name: msg.toolCall.name,
+                response: {
+                  content: sanitizedResult
+                }
+              }
+            }]
+          });
+        }
+      } else {
+        // Just a normal text response
+        const parts: any[] = [];
+        if (msg.content) parts.push({ text: msg.content });
+
+        if (parts.length > 0) {
+          historyContents.push({ role: 'model', parts });
+        }
+      }
+    }
+  }
+  return historyContents;
+};
+
 export const generateWithChat = async (options: ChatOptions) => {
   const { history, newMessage, image, apiKey, baseUrl } = options;
   const model = options.model || 'gemini-3-pro-preview'; // Default to a strong model for chat
@@ -198,92 +277,8 @@ export const generateWithChat = async (options: ChatOptions) => {
     }
   ];
 
-  // 3. Prepare History (Convert to Gemini Format)
-  // Gemini expects: { role: 'user' | 'model', parts: [...] }
-  // We need to filter out 'tool' related internal states if we are just re-sending history,
-  // BUT for Gemini 1.5, we should ideally maintain the multi-turn function calling history if we want to be correct.
-  // For simplicity v1: We will convert previous text/image messages. 
-  // If we want to support multi-turn properly, we need to map our ChatMessage structure accurately to Gemini's Content structure.
-
-  // 3. Prepare History (Convert to Gemini Format)
-  const historyContents: any[] = [];
-
-  for (const msg of history) {
-    // 1. User Message
-    if (msg.role === 'user') {
-      const parts: any[] = [];
-      if (msg.content) parts.push({ text: msg.content });
-
-      // Handle Attachments
-      if (msg.attachments) {
-        for (const att of msg.attachments) {
-          if (att.url.startsWith('data:')) {
-            const base64Data = att.url.split(',')[1];
-            const mimeType = att.url.split(';')[0].split(':')[1];
-            parts.push({
-              inlineData: { mimeType: mimeType, data: base64Data }
-            });
-          }
-        }
-      }
-
-      historyContents.push({ role: 'user', parts });
-    }
-
-    // 2. Model Message (Text or Tool Call)
-    if (msg.role === 'model') {
-      // If this message initiated a tool call
-      if (msg.toolCall) {
-        // Function call should be in its own turn, without text
-        const functionCallParts = [{
-          functionCall: {
-            name: msg.toolCall.name,
-            args: msg.toolCall.args
-          }
-        }];
-
-        // Push the MODEL turn with ONLY the function call
-        historyContents.push({ role: 'model', parts: functionCallParts });
-
-        // 3. Immediate Tool Result Turn (USER role in Gemini)
-        // If we have a result, we must provide it as the NEXT turn immediately
-        if (msg.toolResult) {
-          // SANITIZATION: Do NOT send the full base64 image data back to the model in history.
-          // This causes massive token usage (treating base64 as text) and hits the 1M limit instantly.
-          let sanitizedResult = msg.toolResult.result;
-
-          // Check if result has imageUrl and it's a data URL
-          if (sanitizedResult && typeof sanitizedResult === 'object' && sanitizedResult.imageUrl && typeof sanitizedResult.imageUrl === 'string' && sanitizedResult.imageUrl.startsWith('data:')) {
-            // Create a copy and replace imageUrl with a placeholder
-            sanitizedResult = {
-              ...sanitizedResult,
-              imageUrl: "<Image Data Omitted for Context Efficiency>"
-            };
-          }
-
-          historyContents.push({
-            role: 'user',
-            parts: [{
-              functionResponse: {
-                name: msg.toolCall.name,
-                response: {
-                  content: sanitizedResult
-                }
-              }
-            }]
-          });
-        }
-      } else {
-        // Just a normal text response
-        const parts: any[] = [];
-        if (msg.content) parts.push({ text: msg.content });
-
-        if (parts.length > 0) {
-          historyContents.push({ role: 'model', parts });
-        }
-      }
-    }
-  }
+  // 3. Prepare History using helper
+  const historyContents = prepareGeminiHistory(history);
 
   // 4. Current Message Construction
   const currentParts: any[] = [{ text: newMessage }];
@@ -339,7 +334,7 @@ export const generateWithChat = async (options: ChatOptions) => {
   return { text, toolCall };
 };
 
-async function fileToGenerativePart(file: File): Promise<{ inlineData: { data: string; mimeType: string } }> {
+export async function fileToGenerativePart(file: File): Promise<{ inlineData: { data: string; mimeType: string } }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {

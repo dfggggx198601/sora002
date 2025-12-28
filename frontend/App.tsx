@@ -19,6 +19,8 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { UserManagement } from './components/UserManagement';
 import { ContentAudit } from './components/ContentAudit';
 import { AdminSettings } from './components/AdminSettings';
+import { AdminOrders } from './components/AdminOrders';
+
 
 // 添加 Admin Tab 类型
 type AdminTab = 'dashboard' | 'users' | 'content' | 'settings';
@@ -28,7 +30,7 @@ const App = () => {
   // 配置状态
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
   const [googleBaseUrl, setGoogleBaseUrl] = useState<string>('');
-  const [apiKey, setApiKey] = useState<string>(import.meta.env.VITE_GOOGLE_API_KEY || ''); // New: Load from Env
+  const [apiKey, setApiKey] = useState<string>(localStorage.getItem('google_api_key') || '');
   const [showConfig, setShowConfig] = useState(false);
   const [activeTab, setActiveTab] = useState<'video' | 'image' | 'chat'>('video');
 
@@ -67,6 +69,7 @@ const App = () => {
   // Payment State
   const [showBuyQuotaModal, setShowBuyQuotaModal] = useState(false);
   const [paymentPackages, setPaymentPackages] = useState<PaymentPackage[]>([]);
+  const [paymentConfig, setPaymentConfig] = useState<any>(null); // Use any or proper type
   const [selectedPackage, setSelectedPackage] = useState<PaymentPackage | null>(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
@@ -80,37 +83,68 @@ const App = () => {
     try {
       // Use getSystemSettings which accesses the public endpoint
       const settings = await apiService.getSystemSettings();
+
+      // Add ApiKey logic
+      const { aiConfig } = settings;
+      if (aiConfig && aiConfig.apiKey) {
+        setApiKey(prev => {
+          // If user has local key, prefer it? Or system key?
+          // User asked: "User refreshes -> automatically load this key".
+          // This implies system key overrides or fills empty.
+          if (!prev) return aiConfig.apiKey || '';
+          return prev;
+        });
+
+        // Also handling baseUrl
+        if (aiConfig.baseUrl && aiConfig.baseUrl !== googleBaseUrl) {
+          setGoogleBaseUrl(aiConfig.baseUrl);
+        }
+      }
+
+      // Original Logic
       if (settings?.announcement?.enabled) {
         setAnnouncement(settings.announcement);
       }
       if (settings?.paymentPackages) {
         setPaymentPackages(settings.paymentPackages);
       }
+      if (settings?.paymentConfig) {
+        setPaymentConfig(settings.paymentConfig);
+      }
     } catch (error) {
       console.error('Failed to fetch settings:', error);
     }
   };
 
-  const handleConfirmPayment = async () => {
+  const handleConfirmPayment = async (provider: 'manual' | 'epay' = 'manual') => {
     if (!selectedPackage || !userProfile) return;
 
     try {
       setIsProcessingPayment(true);
-      // Simulate waiting (user scanning QR)
-      // In real world, we would poll for status or wait for webhook
-      // Here we just pretend it took 2 seconds
-      await new Promise(resolve => setTimeout(resolve, 2000));
 
-      const result = await apiService.buyQuota(selectedPackage.id);
-
-      // Update local quota
-      if (result.quota) {
-        quotaService.syncUsage(result.quota);
-        setQuotaStats(quotaService.getUsageStats());
+      if (provider === 'manual') {
+        // Simulate waiting slightly less because user supposedly already paid
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      alert(`支付成功！${selectedPackage.name} 已到账。`);
-      setShowBuyQuotaModal(false);
+      const result = await apiService.buyQuota(selectedPackage.id, provider);
+
+      if (provider === 'manual') {
+        // Manual: Show success message that order is pending
+        alert(`订单已提交！请等待管理员审核。订单号: ${result.orderId}`);
+        setShowBuyQuotaModal(false);
+        // Don't update quota immediately as it's pending
+      } else {
+        // Epay: Redirect or show URL
+        if (result.paymentUrl) {
+          window.location.href = result.paymentUrl;
+        } else {
+          // If just testing or mock
+          alert('订单已创建 (易支付接口暂未完全对接跳转)');
+          setShowBuyQuotaModal(false);
+        }
+      }
+
     } catch (error: any) {
       alert(error.message || '支付失败，请重试');
     } finally {
@@ -341,23 +375,32 @@ const App = () => {
       return;
     }
 
-    // Auth Check
-    if (!isGoogleConnected) {
+    // Logic: Use API Key if available, else try Proxy if Logged In
+    const hasClientKey = isGoogleConnected || (apiKey && apiKey.length > 0);
+    const canUseProxy = isAuthenticated;
+
+    if (!hasClientKey && !canUseProxy) {
       await handleConnectGoogle();
-      // Don't proceed immediately, let user click again after connecting
       return;
     }
 
     setIsGeneratingRefImage(true);
     try {
-      // 使用 Gemini 3 Pro Image (Official)
-      const base64Url = await generateImageWithGoogle(
-        refImagePrompt,
-        // Pass API Key explicitly
-        'gemini-3-pro-image-preview',
-        googleBaseUrl,
-        apiKey
-      );
+      let base64Url: string;
+
+      if (hasClientKey) {
+        // 使用前端直连 (Gemini 3 Pro Image)
+        base64Url = await generateImageWithGoogle(
+          refImagePrompt,
+          'gemini-3-pro-image-preview',
+          googleBaseUrl,
+          apiKey
+        );
+      } else {
+        // 使用后端代理
+        const res = await apiService.generateAiImage(refImagePrompt, 'gemini-3-pro-image-preview');
+        base64Url = res.imageUrl;
+      }
 
       // 将 Base64 转换为 File 对象，以便兼容现有的上传逻辑
       const res = await fetch(base64Url);
@@ -369,8 +412,7 @@ const App = () => {
       setRefImagePrompt(''); // 清空图片提示词
     } catch (error: any) {
       alert(`图片生成失败: ${error.message} `);
-      // If error is related to Auth, reset state
-      if (error.message.includes("API Key")) {
+      if (error.message.includes("API Key") && hasClientKey) {
         setIsGoogleConnected(false);
       }
     } finally {
@@ -385,8 +427,10 @@ const App = () => {
       return;
     }
 
-    // Auth Check
-    if (!isGoogleConnected) {
+    const hasClientKey = isGoogleConnected || (apiKey && apiKey.length > 0);
+    const canUseProxy = isAuthenticated;
+
+    if (!hasClientKey && !canUseProxy) {
       await handleConnectGoogle();
       return;
     }
@@ -422,16 +466,15 @@ const App = () => {
           prompt: standaloneImagePrompt,
           model: finalModel
         });
-        // 使用服务器返回的任务 ID (替换本地 ID)
-        newTask.id = res.task.id || res.task._id; // Adapt to whatever ID field backend uses
-        // 更新本地配额统计 (后端已更新)
+        // 使用服务器返回的任务 ID
+        newTask.id = res.task.id || res.task._id;
         if (res.quota) setQuotaStats(res.quota);
       } catch (error: any) {
         alert(`创建任务失败: ${error.message}`);
         return;
       }
     } else {
-      // 未登录：仅本地配额扣除
+      // Only if hasClientKey (Guest Mode with Key)
       quotaService.incrementUsage('IMAGE');
       setQuotaStats(quotaService.getUsageStats());
     }
@@ -442,13 +485,20 @@ const App = () => {
 
     // 2. 执行生成
     try {
-      const base64Url = await generateImageWithGoogle(
-        newTask.prompt,
-        // Pass API Key explicitly
-        finalModel,
-        googleBaseUrl,
-        apiKey
-      );
+      let base64Url: string;
+
+      if (hasClientKey) {
+        base64Url = await generateImageWithGoogle(
+          newTask.prompt,
+          finalModel,
+          googleBaseUrl,
+          apiKey
+        );
+      } else {
+        // Proxy
+        const res = await apiService.generateAiImage(newTask.prompt, finalModel);
+        base64Url = res.imageUrl;
+      }
 
       // 转换为 Blob URL 以优化内存展示
       const res = await fetch(base64Url);
@@ -476,8 +526,6 @@ const App = () => {
           });
         } catch (syncErr: any) {
           console.error('Failed to sync image to backend:', syncErr);
-          // 降级策略：如果由于图片太大或其他原因同步失败，尝试仅同步状态
-          // 这样至少在其他设备上能看到任务已完成（虽然没图）
           try {
             await apiService.updateTask(newTask.id, {
               status: GenerationStatus.COMPLETED,
@@ -509,7 +557,7 @@ const App = () => {
         });
       }
 
-      if (err.message && err.message.includes("API Key")) {
+      if (err.message && err.message.includes("API Key") && hasClientKey) {
         setIsGoogleConnected(false);
       }
     }
@@ -727,13 +775,26 @@ const App = () => {
     }
   };
 
+  /* --- Chat Image Gen Helper --- */
   const handleGenerateImageForChat = async (prompt: string): Promise<string | null> => {
-    // Reuse existing image generation logic
-    // For Chat, we usually want to use the Google Service directly
+    // Reuse existing image generation logic with proxy support
     try {
       console.log(`[Chat Image Gen] Using model: ${selectedImageModel}`);
-      const url = await generateImageWithGoogle(prompt, selectedImageModel, googleBaseUrl, apiKey);
-      return url;
+
+      const hasClientKey = isGoogleConnected || (apiKey && apiKey.length > 0);
+
+      if (hasClientKey) {
+        const url = await generateImageWithGoogle(prompt, selectedImageModel, googleBaseUrl, apiKey);
+        return url;
+      } else if (isAuthenticated) {
+        // Proxy
+        const res = await apiService.generateAiImage(prompt, selectedImageModel);
+        return res.imageUrl;
+      } else {
+        alert('请先登录或配置 API Key');
+        return null;
+      }
+
     } catch (e) {
       console.error("Chat Image Gen Error", e);
       return null;
@@ -795,9 +856,11 @@ const App = () => {
         onTabChange={(tab: string) => setAdminTab(tab as any)}
         onExit={() => setIsAdminMode(false)}
       >
+        // ... (in AdminLayout switch)
         {adminTab === 'dashboard' && <AdminDashboard />}
         {adminTab === 'users' && <UserManagement />}
         {adminTab === 'content' && <ContentAudit />}
+        {adminTab === 'orders' && <AdminOrders />}
         {adminTab === 'settings' && <AdminSettings />}
       </AdminLayout>
     );
@@ -1309,6 +1372,7 @@ const App = () => {
                     <ChatInterface
                       task={activeTask}
                       apiKey={apiKey}
+                      isAuthenticated={isAuthenticated}
                       onUpdateTask={handleUpdateTask}
                       onGenerateImage={handleGenerateImageForChat}
                     />
@@ -1511,27 +1575,50 @@ const App = () => {
               )}
             </div>
 
+            {/* Payment Content */}
             {selectedPackage && (
               <div className="bg-zinc-950 rounded-lg p-4 border border-zinc-800 text-center space-y-4 mb-4">
-                <div className="text-sm text-zinc-400">请扫描下方二维码支付 <span className="text-white font-bold">¥{selectedPackage.price}</span></div>
-                <div className="w-40 h-40 bg-white mx-auto rounded-lg flex items-center justify-center overflow-hidden relative">
-                  {/* Placeholder QR Code */}
-                  <div className="absolute inset-0 bg-[url('https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=SoraStudioPayment')] bg-center bg-cover opacity-80"></div>
-                  <div className="z-10 bg-white p-1 rounded-sm">
-                    <span className="text-black text-xs font-bold">模拟支付码</span>
-                  </div>
-                </div>
-                <p className="text-xs text-zinc-500">支付完成后请点击下方按钮核销</p>
+                {/* 1. Payment Method Detection */}
+                {(!paymentConfig?.enabled || paymentConfig?.provider === 'manual') ? (
+                  // Manual Mode
+                  <>
+                    <div className="text-sm text-zinc-400">请扫描下方二维码支付 <span className="text-white font-bold">¥{selectedPackage.price}</span></div>
+                    <div className="w-48 h-48 bg-white mx-auto rounded-lg flex items-center justify-center overflow-hidden relative border-4 border-white">
+                      {paymentConfig?.manualQrCodeUrl ? (
+                        <img src={paymentConfig.manualQrCodeUrl} alt="Payment QR" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="text-black text-xs font-bold p-4 text-center">
+                          管理员未配置收款码<br />请联系客服
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-500">支付时请备注您的邮箱，付款后点击下方按钮</p>
+
+                    <button
+                      disabled={isProcessingPayment}
+                      onClick={() => handleConfirmPayment('manual')}
+                      className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-bold rounded-xl transition-all shadow-lg"
+                    >
+                      {isProcessingPayment ? '正在提交订单...' : '我已支付，提交审核'}
+                    </button>
+                  </>
+                ) : (
+                  // Epay Mode (Auto)
+                  <>
+                    <div className="text-sm text-zinc-400">即将跳转至收银台，支付 <span className="text-white font-bold">¥{selectedPackage.price}</span></div>
+                    <p className="text-xs text-zinc-500 mb-4">支付成功后自动到账，无需人工审核</p>
+
+                    <button
+                      disabled={isProcessingPayment}
+                      onClick={() => handleConfirmPayment('epay')}
+                      className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl transition-all shadow-lg"
+                    >
+                      {isProcessingPayment ? '正在创建...' : '立即支付 (Alipay/WeChat)'}
+                    </button>
+                  </>
+                )}
               </div>
             )}
-
-            <button
-              disabled={!selectedPackage || isProcessingPayment}
-              onClick={handleConfirmPayment}
-              className="w-full py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-all shadow-lg shadow-green-900/20"
-            >
-              {isProcessingPayment ? '正在处理...' : '我已支付，立即充值'}
-            </button>
           </div>
         </div>
       )}

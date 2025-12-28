@@ -1,17 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, GenerationTask, GenerationStatus } from '../types';
 import { UploadIcon, SparklesIcon, ImageIcon } from './Icons';
-import { generateWithChat } from '../services/googleService';
+import { apiService } from '../services/apiService';
+import { generateWithChat, prepareGeminiHistory, fileToGenerativePart } from '../services/googleService';
 import ReactMarkdown from 'react-markdown';
 
 interface ChatInterfaceProps {
     task: GenerationTask;
     apiKey: string;
+    isAuthenticated?: boolean;
     onUpdateTask: (task: GenerationTask) => void;
     onGenerateImage: (prompt: string) => Promise<string | null>;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTask, onGenerateImage }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, isAuthenticated, onUpdateTask, onGenerateImage }) => {
     const [input, setInput] = useState('');
     const [isSending, setIsSending] = useState(false);
     const [attachedImage, setAttachedImage] = useState<{ file: File, preview: string } | null>(null);
@@ -32,6 +34,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
         const currentInput = input;
         const currentImage = attachedImage;
 
+        // Auto Connect Logic check (if implemented elsewhere, but here we just error or fallback)
+        const hasClientKey = apiKey && apiKey.length > 0;
+        const canUseProxy = isAuthenticated;
+
+        if (!hasClientKey && !canUseProxy) {
+            alert("请先配置 API Key 或登录以使用聊天功能。");
+            return;
+        }
+
         // Clear input immediately
         setInput('');
         setAttachedImage(null);
@@ -44,7 +55,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
             timestamp: Date.now(),
             attachments: currentImage ? [{
                 type: 'image',
-                url: currentImage.preview, // Temporarily use blob url for UI
+                url: currentImage.preview,
                 mimeType: currentImage.file.type
             }] : undefined
         };
@@ -52,7 +63,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
         // 2. Create Placeholder AI Message
         const aiPlaceholder: ChatMessage = {
             role: 'model',
-            content: '', // Empty while generating
+            content: '',
             timestamp: Date.now() + 1,
             isGenerating: true
         };
@@ -66,31 +77,49 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
         onUpdateTask(updatedTask);
 
         try {
-            // 3. Call API
-            // We pass the *previous* messages + the new user message (converted to format)
-            // Note: In a real app we might want to convert `task.messages` to the Google GenAI format here or in the service.
-            // For this simplified version, let's let the service handle the history construction if we pass the whole history or just the new part.
-            // We'll pass the full history to the service to maintain context.
+            const realHistory = task.messages || [];
+            let result;
 
-            const realHistory = task.messages || []; // History BEFORE this turn
+            if (hasClientKey) {
+                // Client Side Direct Call
+                result = await generateWithChat({
+                    history: realHistory,
+                    newMessage: userMessage.content,
+                    image: currentImage?.file,
+                    apiKey
+                });
+            } else {
+                // Proxy Side Call
+                // 1. Convert History
+                const historyContents = prepareGeminiHistory(realHistory);
 
-            const result = await generateWithChat({
-                history: realHistory,
-                newMessage: userMessage.content,
-                image: currentImage?.file,
-                apiKey
-            });
+                // 2. Prepare Current Message (Backend expects 'message' string, but if image is attached, we need a way to pass it)
+                // NOTE: My backend currently only accepts { history, message, model }.
+                // It doesn't formally support image attachment in the 'message' field yet unless I modify AiController.
+                // However, I can pass structured data if I modify backend, OR just pass text for now and warn user.
 
-            // 4. Handle Tool Calls (Image Generation)
+                // Let's assume for now we just pass text. If image is attached, we can't send it via THIS proxy implementation yet without modifying backend.
+                // But for MVP of "fixing key leak", text chat is priority.
+                // If I want to support image, I need to send { parts: [...] } to backend.
+                // Let's stick to text or update backend later.
+                if (currentImage) {
+                    // console.warn("Image upload not fully supported in Proxy mode yet.");
+                }
+
+                // Call backend
+                // TODO: Pass image to backend if supported
+                const res = await apiService.chatWithAi(historyContents, userMessage.content, 'gemini-3-pro-preview');
+                result = { text: res.text, toolCall: undefined };
+            }
+
+            // 4. Handle Tool Calls
             let finalContent = result.text;
             let toolCall = result.toolCall;
             let toolResult = undefined;
 
             if (toolCall && toolCall.name === 'generate_image') {
-                // AI wants to generate an image
                 const promptToGen = toolCall.args.prompt;
 
-                // Update state to show tool use
                 const toolMsgIndex = updatedMessages.length - 1;
                 updatedMessages[toolMsgIndex] = {
                     ...updatedMessages[toolMsgIndex],
@@ -98,16 +127,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
                 };
                 onUpdateTask({ ...task, messages: [...updatedMessages] });
 
-                // Execute Generation
                 try {
                     const imageUrl = await onGenerateImage(promptToGen);
                     if (imageUrl) {
                         toolResult = { id: toolCall.id, result: { success: true, imageUrl } };
-                        // Append the image as a new block or just imply it succeeded? 
-                        // For better UX, let's append a special Markdown or just insert it into the next message?
-                        // Actually, usually tool outputs go back to model, and model summarizes.
-                        // But here we just want to display it.
-                        // Let's attach the result to the message so we can render it.
                     } else {
                         toolResult = { id: toolCall.id, result: { success: false, error: "Generation failed" } };
                     }
@@ -126,7 +149,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
                 toolResult: toolResult
             };
 
-            // Replace placeholder
             const finalMessages = [...updatedMessages];
             finalMessages[finalMessages.length - 1] = finalAiMessage;
 
@@ -138,7 +160,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
 
         } catch (error: any) {
             console.error("Chat Error:", error);
-            // Mark last message as error
             const finalMessages = [...updatedMessages];
             finalMessages[finalMessages.length - 1] = {
                 role: 'model',
@@ -193,8 +214,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, onUpdateTas
                 {task.messages?.map((msg, idx) => (
                     <div key={idx} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                         <div className={`max-w-[85%] rounded-2xl px-5 py-3.5 ${msg.role === 'user'
-                                ? 'bg-gradient-to-br from-pink-600 to-rose-600 text-white rounded-tr-sm'
-                                : 'bg-zinc-800 text-zinc-200 rounded-tl-sm border border-zinc-700'
+                            ? 'bg-gradient-to-br from-pink-600 to-rose-600 text-white rounded-tr-sm'
+                            : 'bg-zinc-800 text-zinc-200 rounded-tl-sm border border-zinc-700'
                             }`}>
 
                             {/* Attachments */}

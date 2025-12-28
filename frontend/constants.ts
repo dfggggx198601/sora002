@@ -8,7 +8,7 @@ export const DEFAULT_CUSTOM_CONFIG: CustomApiConfig = {
 
 // Cloud Run Fallback Configuration
 export const DEFAULT_GOOGLE_CONFIG = {
-  apiKey: "AlzaSyDRdEV1tFZCYtTZ2nMj435TzsNycjJ2PCc", // 您的 Google API Key
+  apiKey: "", // 请在 Admin Settings 中配置 API Key
   baseUrl: "" // 默认为空，使用 Google 官方地址。如有需要可填 https://proxy...
 };
 

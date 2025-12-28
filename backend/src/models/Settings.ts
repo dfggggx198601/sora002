@@ -32,6 +32,11 @@ export interface ISettings {
         epayPid: string;
         epayKey: string;
     };
+    aiConfig?: {
+        googleKeys: string[];  // Array of API Keys for rotation
+        baseUrl?: string;      // Custom API Endpoint
+        enabled: boolean;
+    };
     updatedAt: Date;
 }
 
@@ -73,7 +78,12 @@ export class SettingsModel {
                 epayPid: data.paymentConfig?.epayPid || '',
                 epayKey: data.paymentConfig?.epayKey || ''
             },
-            updatedAt: data.updatedAt ? data.updatedAt.toDate() : new Date()
+            updatedAt: data.updatedAt ? data.updatedAt.toDate() : new Date(),
+            aiConfig: {
+                googleKeys: data.aiConfig?.googleKeys || [],
+                baseUrl: data.aiConfig?.baseUrl || '',
+                enabled: data.aiConfig?.enabled || false
+            }
         };
     }
 
@@ -106,6 +116,11 @@ export class SettingsModel {
             paymentConfig: {
                 ...currentData.paymentConfig!,
                 ...(settings.paymentConfig || {})
+            },
+            aiConfig: {
+                googleKeys: settings.aiConfig?.googleKeys || currentData.aiConfig?.googleKeys || [],
+                baseUrl: settings.aiConfig?.baseUrl !== undefined ? settings.aiConfig.baseUrl : (currentData.aiConfig?.baseUrl || ''),
+                enabled: settings.aiConfig?.enabled !== undefined ? settings.aiConfig.enabled : (currentData.aiConfig?.enabled || false)
             },
             updatedAt: new Date()
         };

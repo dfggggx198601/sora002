@@ -1,5 +1,5 @@
 import React from 'react';
-import { LucideIcon, LayoutDashboard, Users, Image as ImageIcon, ArrowLeft, Settings } from 'lucide-react';
+import { LucideIcon, LayoutDashboard, Users, Image as ImageIcon, ArrowLeft, Settings, CreditCard } from 'lucide-react';
 
 interface SidebarItemProps {
     icon: LucideIcon;
@@ -57,6 +57,12 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ activeTab, onTabChange
                         label="内容管理 (Content)"
                         active={activeTab === 'content'}
                         onClick={() => onTabChange('content')}
+                    />
+                    <SidebarItem
+                        icon={CreditCard}
+                        label="订单审核 (Orders)"
+                        active={activeTab === 'orders'}
+                        onClick={() => onTabChange('orders')}
                     />
                     <SidebarItem
                         icon={Settings}

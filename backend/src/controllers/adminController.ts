@@ -236,7 +236,32 @@ export class AdminController {
       res.setHeader('Expires', '0');
 
       const settings = await SettingsModel.getSettings();
-      res.status(200).json(settings);
+
+      // Sanitization:
+      // Typically we hide sensitive keys (payment keys, etc.) from public endpoint.
+      // But user REQUESTED to load keys into frontend for v0.2 style direct calls.
+      // We will expose the *first* available Google Key if AI is enabled, to be used by frontend.
+      // Payment keys (epayKey) should still be hidden.
+
+      const publicSettings = {
+        ...settings,
+        paymentConfig: {
+          ...settings.paymentConfig,
+          epayKey: undefined, // Hide secret
+          epayPid: undefined // Hide pid if sensitive (often public-ish but safer to hide)
+        },
+        aiConfig: {
+          enabled: settings.aiConfig?.enabled,
+          // EXPOSE KEY for Frontend v0.2 Style (Direct Call)
+          // Only expose if enabled.
+          apiKey: (settings.aiConfig?.enabled && settings.aiConfig?.googleKeys?.length > 0)
+            ? settings.aiConfig.googleKeys[0]
+            : undefined,
+          baseUrl: settings.aiConfig?.baseUrl
+        }
+      };
+
+      res.status(200).json(publicSettings);
     } catch (error) {
       console.error('Get settings error:', error);
       res.status(500).json({ error: 'Failed to fetch settings' });
@@ -294,11 +319,89 @@ export class AdminController {
         };
       }
 
+      if (updates.aiConfig) {
+        cleanSettings.aiConfig = {
+          enabled: !!updates.aiConfig.enabled,
+          googleKeys: Array.isArray(updates.aiConfig.googleKeys) ? updates.aiConfig.googleKeys.filter((k: any) => typeof k === 'string' && k.trim() !== '') : []
+        };
+      }
+
       await SettingsModel.updateSettings(cleanSettings);
       res.status(200).json({ message: 'Settings updated' });
     } catch (error) {
       console.error('Update settings error:', error);
       res.status(500).json({ error: 'Failed to update settings' });
+    }
+  }
+  // 获取订单列表
+  static async getOrders(req: Request, res: Response) {
+    try {
+      const { OrderModel } = await import('../models/Order');
+      const orders = await OrderModel.getPendingOrders();
+
+      // Enrich with user email
+      const enrichedOrders = await Promise.all(orders.map(async (order) => {
+        const user = await UserModel.findById(order.userId);
+        return {
+          ...order,
+          userEmail: user?.email || 'Unknown User'
+        };
+      }));
+
+      res.status(200).json(enrichedOrders);
+    } catch (error) {
+      console.error('Get orders error:', error);
+      res.status(500).json({ error: 'Failed to fetch orders' });
+    }
+  }
+
+  // 审核订单 (同意/拒绝)
+  static async verifyOrder(req: Request, res: Response) {
+    try {
+      const { orderId } = req.params;
+      const { action } = req.body; // 'approve' | 'reject'
+
+      const { OrderModel } = await import('../models/Order');
+      const order = await OrderModel.findById(orderId);
+
+      if (!order) {
+        return res.status(404).json({ error: 'Order not found' });
+      }
+
+      if (order.status !== 'pending') {
+        return res.status(400).json({ error: 'Order is not pending' });
+      }
+
+      if (action === 'reject') {
+        await OrderModel.updateStatus(orderId, 'cancelled');
+        return res.status(200).json({ message: 'Order rejected' });
+      }
+
+      if (action === 'approve') {
+        // 1. Update Order Status
+        await OrderModel.updateStatus(orderId, 'paid');
+
+        // 2. Add Quota to User
+        const user = await UserModel.findById(order.userId);
+        if (user) {
+          const pkg = order.packageSnapshot;
+          const newQuota = { ...user.quota };
+
+          // Must ensure count doesn't go below reasonable logic, but essentially we subtract 'count' to add 'allowance'
+          newQuota.videoCount = Math.max(-9999, newQuota.videoCount - pkg.videoIncrease);
+          newQuota.imageCount = Math.max(-9999, newQuota.imageCount - pkg.imageIncrease);
+          newQuota.chatCount = Math.max(-9999, newQuota.chatCount - pkg.chatIncrease);
+
+          await UserModel.update(user.id!, { quota: newQuota });
+        }
+
+        return res.status(200).json({ message: 'Order approved and quota added' });
+      }
+
+      return res.status(400).json({ error: 'Invalid action' });
+    } catch (error) {
+      console.error('Verify order error:', error);
+      res.status(500).json({ error: 'Failed to verify order' });
     }
   }
 }

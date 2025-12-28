@@ -9,6 +9,7 @@ import authRoutes from './routes/auth';
 import taskRoutes from './routes/tasks';
 import adminRoutes from './routes/admin';
 import settingsRoutes from './routes/settings';
+import aiRoutes from './routes/ai';
 
 // 加载环境变量
 dotenv.config();
@@ -68,6 +69,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/ai', aiRoutes);
 
 // 错误处理
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

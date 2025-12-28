@@ -92,10 +92,10 @@ class ApiService {
     return this.request('/auth/profile');
   }
 
-  async buyQuota(packageId: string) {
+  async buyQuota(packageId: string, provider: 'manual' | 'epay' = 'manual') {
     return this.request('/auth/buy-quota', {
       method: 'POST',
-      body: JSON.stringify({ packageId })
+      body: JSON.stringify({ packageId, provider })
     });
   }
 
@@ -182,6 +182,32 @@ class ApiService {
     return this.request('/admin/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
+    });
+  }
+
+  async getAdminOrders() {
+    return this.request('/admin/orders');
+  }
+
+  async verifyOrder(orderId: string, action: 'approve' | 'reject') {
+    return this.request(`/admin/orders/${orderId}/verify`, {
+      method: 'PUT',
+      body: JSON.stringify({ action }),
+    });
+  }
+
+  // AI 代理服务
+  async generateAiImage(prompt: string, model: string) {
+    return this.request('/ai/image', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, model })
+    });
+  }
+
+  async chatWithAi(history: any[], message: string, model: string) {
+    return this.request('/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ history, message, model })
     });
   }
 

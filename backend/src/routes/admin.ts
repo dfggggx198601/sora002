@@ -20,6 +20,10 @@ router.put('/users/:userId/password', AdminController.resetPassword);
 router.get('/tasks', AdminController.getTasks);
 router.delete('/tasks/:taskId', AdminController.deleteTask);
 
+// 订单管理
+router.get('/orders', AdminController.getOrders);
+router.put('/orders/:orderId/verify', AdminController.verifyOrder);
+
 // 系统设置
 router.get('/settings', AdminController.getSettings);
 router.put('/settings', AdminController.updateSettings);

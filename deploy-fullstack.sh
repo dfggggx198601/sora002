@@ -81,7 +81,7 @@ echo "🎨 部署前端服务..."
 cd ../frontend
 
 # 注入 Google API Key 到环境变量 (用于构建时)
-echo "VITE_GOOGLE_API_KEY=AIzaSyDRdEV1tFZCYtTZ2nMj435TzsNycjJ2PCc" > .env
+echo "VITE_GOOGLE_API_KEY=" > .env
 
 # 构建并部署前端到 Cloud Run
 gcloud run deploy $FRONTEND_SERVICE \
