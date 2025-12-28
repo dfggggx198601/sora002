@@ -8,11 +8,31 @@ const pickKey = (keys: string[]) => {
     return keys[Math.floor(Math.random() * keys.length)];
 };
 
+import { UserModel } from '../models/User';
+
 export class AiController {
 
     static async generateImage(req: Request, res: Response) {
         try {
             const { prompt, model } = req.body;
+            // @ts-ignore
+            const userId = req.userId; // Provided by authMiddleware
+
+            // 1. Check Quota
+            if (userId) {
+                const user = await UserModel.findById(userId);
+                if (!user) return res.status(404).json({ error: 'User not found' });
+
+                // Check limit
+                if (user.quota.imageCount >= user.quota.dailyImageLimit) {
+                    return res.status(429).json({ error: 'Daily image quota exceeded' });
+                }
+
+                // Increment Usage (Assume 1 credit per image)
+                const newQuota = { ...user.quota, imageCount: (user.quota.imageCount || 0) + 1 };
+                await UserModel.update(userId, { quota: newQuota });
+            }
+
             const settings = await SettingsModel.getSettings();
 
             if (!settings.aiConfig?.enabled) {
@@ -26,6 +46,7 @@ export class AiController {
                 return res.status(500).json({ error: 'No API Keys configured in system' });
             }
 
+            // ... (Existing Logic)
             // Using official GoogleGenerativeAI SDK logic
             // Note: Current @google/generative-ai SDK doesn't natively support "Imagen" via the same class structure as Gemini in some versions,
             // or it requires specific beta endpoints.
@@ -112,6 +133,24 @@ export class AiController {
         let apiKey = '';
         try {
             const { history, message, model } = req.body;
+            // @ts-ignore
+            const userId = req.userId;
+
+            // 1. Check Quota
+            if (userId) {
+                const user = await UserModel.findById(userId);
+                if (!user) return res.status(404).json({ error: 'User not found' });
+
+                // Check limit
+                if (user.quota.chatCount >= (user.quota.dailyChatLimit || 50)) {
+                    return res.status(429).json({ error: 'Daily chat quota exceeded' });
+                }
+
+                // Increment Usage
+                const newQuota = { ...user.quota, chatCount: (user.quota.chatCount || 0) + 1 };
+                await UserModel.update(userId, { quota: newQuota });
+            }
+
             const settings = await SettingsModel.getSettings();
 
             if (!settings.aiConfig?.enabled) {
@@ -152,6 +191,11 @@ export class AiController {
 
             if (!rawRes.ok) {
                 const err = await rawRes.text();
+                // Check for 404 which might indicate "Model not found" or "API Version mismatch"
+                if (rawRes.status === 404) {
+                    throw new Error(`Model '${model || 'gemini-3-pro-preview'}' not found on this endpoint (${cleanBaseUrl}). Check API version or model name.`);
+                }
+
                 console.error(`[AI Proxy Error] Status: ${rawRes.status}, URL: ${chatUrl}`);
                 console.error(`[AI Proxy Response] ${err}`);
 

@@ -46,8 +46,14 @@ export class OrderModel {
         const db = getDB();
         const snapshot = await db.collection(this.COLLECTION)
             .where('status', '==', 'pending')
-            .orderBy('createdAt', 'desc')
             .get();
-        return snapshot.docs.map(doc => doc.data() as IOrder);
+
+        const orders = snapshot.docs.map(doc => doc.data() as IOrder);
+        // Sort in memory to avoid needing a composite index
+        return orders.sort((a, b) => {
+            const tA = a.createdAt instanceof Date ? a.createdAt.getTime() : new Date((a.createdAt as any)._seconds * 1000).getTime();
+            const tB = b.createdAt instanceof Date ? b.createdAt.getTime() : new Date((b.createdAt as any)._seconds * 1000).getTime();
+            return tB - tA;
+        });
     }
 }

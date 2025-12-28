@@ -382,15 +382,21 @@ export class AdminController {
         await OrderModel.updateStatus(orderId, 'paid');
 
         // 2. Add Quota to User
+        // 2. Add Quota to User
         const user = await UserModel.findById(order.userId);
         if (user) {
           const pkg = order.packageSnapshot;
           const newQuota = { ...user.quota };
 
-          // Must ensure count doesn't go below reasonable logic, but essentially we subtract 'count' to add 'allowance'
-          newQuota.videoCount = Math.max(-9999, newQuota.videoCount - pkg.videoIncrease);
-          newQuota.imageCount = Math.max(-9999, newQuota.imageCount - pkg.imageIncrease);
-          newQuota.chatCount = Math.max(-9999, newQuota.chatCount - pkg.chatIncrease);
+          // Standard Logic: Increase the Daily Limit (Capacity)
+          // This ensures the user sees 0/16 instead of -6/10.
+          // This effectively gives them extra capacity for today (and future days if not reset).
+          // If the system resets dailyLimit daily, this boost is temporary for today (if reset logic allows) or permanent.
+          // Given the current architecture, increasing the limit is the cleanest "Add-on" behavior visually.
+
+          newQuota.dailyVideoLimit = (newQuota.dailyVideoLimit || 10) + (pkg.videoIncrease || 0);
+          newQuota.dailyImageLimit = (newQuota.dailyImageLimit || 50) + (pkg.imageIncrease || 0);
+          newQuota.dailyChatLimit = (newQuota.dailyChatLimit || 50) + (pkg.chatIncrease || 0);
 
           await UserModel.update(user.id!, { quota: newQuota });
         }
