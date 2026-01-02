@@ -1,0 +1,19 @@
+#!/usr/bin/expect -f
+
+set password "440696ar3W!"
+set host "root@141.147.147.229"
+set timeout 300
+
+# Execute Script with Port Cleanup
+# We run:
+# 1. Stop any apache2/nginx services
+# 2. Kill any process on port 80
+# 3. Start Docker Compose
+spawn ssh -o StrictHostKeyChecking=no $host "service apache2 stop; service nginx stop; fuser -k 80/tcp; cd /root/sora-proxy && docker compose down && docker compose up -d"
+expect {
+    "password:" { send "$password\r" }
+    timeout { puts "SSH Timeout"; exit 1 }
+}
+
+# Wait for script output/completion
+expect eof

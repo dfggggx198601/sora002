@@ -1,6 +1,11 @@
 // Backend API Service
-// HARDCODED PRODUCTION URL for troubleshooting
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://sora-backend-qul5vdkegq-de.a.run.app';
+// Dynamic Base URL detection for Reverse Proxy Support
+// If we are on the official Cloud Run domain, use the compiled VITE_API_URL (Cross-Origin).
+// If we are on a Custom Proxy (e.g. 141.x.x.x), use relative path to route via Nginx.
+const isCloudRun = window.location.hostname.includes('.run.app') || window.location.hostname.includes('localhost');
+const API_BASE_URL = isCloudRun
+  ? (import.meta.env.VITE_API_URL || 'https://sora-backend-qul5vdkegq-de.a.run.app')
+  : ''; // Use relative path for Proxy
 
 
 

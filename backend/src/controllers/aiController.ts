@@ -275,7 +275,7 @@ export class AiController {
                 const user = await UserModel.findById(userId);
                 if (!user) return res.status(404).json({ error: 'User not found' });
 
-                if (user.quota.videoCount >= user.quota.videoLimit) {
+                if (user.quota.videoCount >= user.quota.dailyVideoLimit) {
                     return res.status(429).json({ error: 'Daily video quota exceeded' });
                 }
 
@@ -469,7 +469,8 @@ export class AiController {
             }
 
             // --- PROXY MODIFICATION ---
-            const proxyUrl = `${req.protocol}://${req.get('host')}/api/ai/proxy?url=${encodeURIComponent(finalVideoUrl)}`;
+            // Use Relative Path so that the frontend resolves it against the Current Domain (Custom Proxy or Cloud Run)
+            const proxyUrl = `/api/ai/proxy?url=${encodeURIComponent(finalVideoUrl)}`;
 
             // --- PERSISTENCE: Save to DB if taskId is present ---
             if (currentTaskId) {

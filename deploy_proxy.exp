@@ -1,0 +1,23 @@
+#!/usr/bin/expect -f
+
+set password "440696ar3W!"
+set host "root@141.147.147.229"
+set timeout 300
+
+# 1. Upload Script
+spawn scp -o StrictHostKeyChecking=no /Users/apple/sora002/proxy_install.sh $host:/root/
+expect {
+    "password:" { send "$password\r" }
+    timeout { puts "SCP Timeout"; exit 1 }
+}
+expect eof
+
+# 2. Execute Script
+spawn ssh -o StrictHostKeyChecking=no $host "chmod +x /root/proxy_install.sh && /root/proxy_install.sh"
+expect {
+    "password:" { send "$password\r" }
+    timeout { puts "SSH Timeout"; exit 1 }
+}
+
+# Wait for script output/completion
+expect eof

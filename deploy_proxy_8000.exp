@@ -1,0 +1,23 @@
+#!/usr/bin/expect -f
+
+set password "440696ar3W!"
+set host "root@141.147.147.229"
+set timeout 300
+
+# 1. Upload Updated Script (Port 8000)
+spawn scp -o StrictHostKeyChecking=no /Users/apple/sora002/proxy_install.sh $host:/root/
+expect {
+    "password:" { send "$password\r" }
+    timeout { puts "SCP Timeout"; exit 1 }
+}
+expect eof
+
+# 2. Execute Script
+# Kill process on port 8000 (sora2api) and stop old proxy
+spawn ssh -o StrictHostKeyChecking=no $host "fuser -k 8000/tcp; cd /root/sora-proxy && docker compose down; chmod +x /root/proxy_install.sh && /root/proxy_install.sh"
+expect {
+    "password:" { send "$password\r" }
+    timeout { puts "SSH Timeout"; exit 1 }
+}
+
+expect eof

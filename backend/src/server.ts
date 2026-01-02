@@ -26,7 +26,8 @@ app.use(cors({
 
     // Allow configured origin or any Cloud Run URL (for multiple URL formats)
     const configuredOrigin = process.env.CORS_ORIGIN;
-    if (origin === configuredOrigin || origin.endsWith('.run.app') || origin.includes('localhost')) {
+    // Fix: If env is '*', allow all (logic was previously strict equality)
+    if (configuredOrigin === '*' || origin === configuredOrigin || origin.endsWith('.run.app') || origin.includes('localhost')) {
       return callback(null, true);
     }
 

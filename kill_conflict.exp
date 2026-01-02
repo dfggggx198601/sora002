@@ -1,0 +1,13 @@
+#!/usr/bin/expect -f
+
+set password "440696ar3W!"
+set host "root@141.147.147.229"
+set timeout 30
+
+# Kill the old interfering container
+spawn ssh -o StrictHostKeyChecking=no $host "docker rm -f sora2api"
+expect {
+    "password:" { send "$password\r" }
+    timeout { puts "SSH Timeout"; exit 1 }
+}
+expect eof
