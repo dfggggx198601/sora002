@@ -20,7 +20,19 @@ const PORT = process.env.PORT || 3001;
 // 中间件
 app.use(helmet()); // 安全头
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    // Allow configured origin or any Cloud Run URL (for multiple URL formats)
+    const configuredOrigin = process.env.CORS_ORIGIN;
+    if (origin === configuredOrigin || origin.endsWith('.run.app') || origin.includes('localhost')) {
+      return callback(null, true);
+    }
+
+    console.warn(`Blocked by CORS: ${origin}`);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 app.use(compression()); // 响应压缩

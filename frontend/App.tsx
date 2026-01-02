@@ -80,6 +80,7 @@ const App = () => {
   const [paymentConfig, setPaymentConfig] = useState<any>(null); // Use any or proper type
   const [selectedPackage, setSelectedPackage] = useState<PaymentPackage | null>(null);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -254,6 +255,41 @@ const App = () => {
 
     fetchSettings();
   }, []);
+
+  // 自动轮询：当有任务处于 GENERATING 状态时，每3秒同步一次最新状态
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const hasActiveTasks = tasks.some(t => t.status === GenerationStatus.GENERATING);
+    if (!hasActiveTasks) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const serverTasks = await apiService.getTasks();
+        // 智能合并：只更新状态改变的任务，避免 UI 抖动
+        setTasks(prev => {
+          const newTasks = [...prev];
+          let hasChanges = false;
+          serverTasks.tasks.forEach(remoteTask => {
+            const localIndex = newTasks.findIndex(t => t.id === (remoteTask.id || remoteTask._id));
+            if (localIndex !== -1) {
+              const localTask = newTasks[localIndex];
+              // 如果状态发生了变化 (例如 Pending -> Completed/Failed)
+              if (localTask.status !== remoteTask.status) {
+                newTasks[localIndex] = { ...localTask, ...remoteTask };
+                hasChanges = true;
+              }
+            }
+          });
+          return hasChanges ? newTasks : prev;
+        });
+      } catch (err) {
+        console.error("Polling sync failed", err);
+      }
+    }, 3000); // 3秒刷新一次
+
+    return () => clearInterval(pollInterval);
+  }, [tasks, isAuthenticated]);
 
   // Update URL effect
   useEffect(() => {
@@ -495,7 +531,13 @@ const App = () => {
     try {
       let base64Url: string;
 
-      if (hasClientKey) {
+      if (isAuthenticated) {
+        // Priority 1: Authenticated User -> Use Backend Proxy
+        const res = await apiService.generateAiImage(newTask.prompt, finalModel);
+        base64Url = res.imageUrl;
+
+      } else if (hasClientKey) {
+        // Priority 2: Guest with Key -> Use Client Side Direct Call
         base64Url = await generateImageWithGoogle(
           newTask.prompt,
           finalModel,
@@ -503,9 +545,7 @@ const App = () => {
           apiKey
         );
       } else {
-        // Proxy
-        const res = await apiService.generateAiImage(newTask.prompt, finalModel);
-        base64Url = res.imageUrl;
+        throw new Error("Impossible state: No Auth and No Key");
       }
 
       // 转换为 Blob URL 以优化内存展示
@@ -573,6 +613,7 @@ const App = () => {
 
   // 逻辑 C：生成视频任务
   const handleGenerateVideo = async () => {
+    if (isSubmitting) return;
     if (!prompt && !selectedImage) {
       alert("请输入提示词或上传一张图片");
       return;
@@ -610,6 +651,7 @@ const App = () => {
         if (res.quota) setQuotaStats(res.quota);
       } catch (error: any) {
         alert(`创建任务失败: ${error.message}`);
+        setIsSubmitting(false);
         return;
       }
     } else {
@@ -631,6 +673,7 @@ const App = () => {
     // 4. 清空输入框
     setPrompt('');
     clearImage();
+    setIsSubmitting(false);
 
     // 5. 加入队列执行 (本地 + 异步)
     queueService.enqueue(newTask, apiGenConfig);
@@ -643,11 +686,16 @@ const App = () => {
       let videoUrl: string;
 
       // 根据模型选择不同的服务
-      if (config.model === 'veo-3.1-fast-generate-preview') {
-        // 使用 Veo 服务
+      if (isAuthenticated) {
+        // Priority 1: Authenticated User -> Use Backend Proxy
+        // Pass taskId to allow Backend to persist result (for backgrounding support)
+        const res = await apiService.generateAiVideo(config.prompt, config.model, taskId);
+        videoUrl = res.videoUrl;
+      } else if (config.model === 'veo-3.1-fast-generate-preview') {
+        // Priority 2: Guest with Key -> Use Client Side Direct Call (Veo)
         videoUrl = await generateWithVeo(config, apiKey);
       } else {
-        // 使用自定义 API (Sora 兼容)
+        // Fallback / Other models (Mock/Custom)
         videoUrl = await generateWithCustomApi(config, DEFAULT_CUSTOM_CONFIG);
       }
 
@@ -671,6 +719,14 @@ const App = () => {
       }
     } catch (err: any) {
       console.error(err);
+
+      // 特殊处理：如果浏览器因超时中断请求 (AbortError)，不要标记为失败。
+      // 后端仍在运行，让 Auto-Sync 轮询去更新最终状态。
+      if (err.name === 'AbortError' || (err.message && err.message.includes('aborted'))) {
+        console.warn('[Auto-Recovery] Request aborted by browser. Switching to background polling mode.');
+        return;
+      }
+
       const errorMsg = err.message || "生成失败，未知错误";
 
       setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
@@ -1599,14 +1655,17 @@ const App = () => {
                       </select>
                     </div>
 
-                    {/* Action Button */}
                     <button
                       onClick={handleGenerateVideo}
-                      className="w-full py-3.5 rounded-xl font-bold text-base flex items-center justify-center gap-2 transition-all shadow-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-900/20 hover:shadow-purple-900/40 transform hover:-translate-y-0.5 active:translate-y-0"
+                      disabled={isSubmitting}
+                      className={`w-full py-3.5 rounded-xl font-bold text-base flex items-center justify-center gap-2 transition-all shadow-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white shadow-purple-900/20 hover:shadow-purple-900/40 transform hover:-translate-y-0.5 active:translate-y-0 ${isSubmitting ? 'opacity-50 cursor-not-allowed' : ''}`}
                     >
                       <VideoIcon className="w-5 h-5" />
                       开始生成视频
                     </button>
+                    <div className="text-center text-xs text-slate-600 py-2">
+                      System v2026.01.02-Rev27 (Auto-Sync)
+                    </div>
                   </div>
                 )}
 
@@ -1651,7 +1710,7 @@ const App = () => {
                       className="w-full py-3.5 rounded-xl font-bold text-base flex items-center justify-center gap-2 transition-all shadow-xl bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white shadow-pink-900/20 hover:shadow-pink-900/40 transform hover:-translate-y-0.5 active:translate-y-0"
                     >
                       <ImageIcon className="w-5 h-5" />
-                      {isGoogleConnected ? '开始生成图片' : '连接 Google 账号以开始'}
+                      {(isGoogleConnected || isAuthenticated) ? '开始生成图片' : '请先登录或连接 Google 账号'}
                     </button>
                   </div>
                 )}

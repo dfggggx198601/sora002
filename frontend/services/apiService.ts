@@ -1,6 +1,8 @@
 // Backend API Service
 // HARDCODED PRODUCTION URL for troubleshooting
-const API_BASE_URL = 'https://sora-studio-backend-718161097168.us-central1.run.app';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://sora-backend-qul5vdkegq-de.a.run.app';
+
+
 
 class ApiService {
   private token: string | null = null;
@@ -201,6 +203,13 @@ class ApiService {
     return this.request('/ai/image', {
       method: 'POST',
       body: JSON.stringify({ prompt, model })
+    });
+  }
+
+  async generateAiVideo(prompt: string, model: string, taskId?: string) {
+    return this.request('/ai/video', {
+      method: 'POST',
+      body: JSON.stringify({ prompt, model, taskId })
     });
   }
 

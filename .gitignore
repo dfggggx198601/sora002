@@ -22,3 +22,19 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Credentials and Secrets
+service-account-key.json
+secrets.json
+
+# Build Artifacts
+*.tar.gz
+build_artifacts/
+frontend/build_artifacts/
+
+# Env
+.env
+.env.production
+
+test_admin_role.js
+remote_bundle.js

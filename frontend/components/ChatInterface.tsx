@@ -80,8 +80,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, isAuthentic
             const realHistory = task.messages || [];
             let result;
 
-            if (hasClientKey) {
-                // Client Side Direct Call
+            if (canUseProxy) {
+                // Priority 1: Authenticated User -> Use Backend Proxy (Stable, No GFW issues)
+                // 1. Convert History
+                const historyContents = prepareGeminiHistory(realHistory);
+
+                // 2. Prepare Current Message
+                if (currentImage) {
+                    // console.warn("Image upload not fully supported in Proxy mode yet.");
+                }
+
+                // Call backend
+                const res = await apiService.chatWithAi(historyContents, userMessage.content, 'gemini-3-pro-preview');
+                result = { text: res.text, toolCall: undefined };
+
+            } else if (hasClientKey) {
+                // Priority 2: Guest with Key -> Use Client Side Direct Call
                 result = await generateWithChat({
                     history: realHistory,
                     newMessage: userMessage.content,
@@ -89,27 +103,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, isAuthentic
                     apiKey
                 });
             } else {
-                // Proxy Side Call
-                // 1. Convert History
-                const historyContents = prepareGeminiHistory(realHistory);
-
-                // 2. Prepare Current Message (Backend expects 'message' string, but if image is attached, we need a way to pass it)
-                // NOTE: My backend currently only accepts { history, message, model }.
-                // It doesn't formally support image attachment in the 'message' field yet unless I modify AiController.
-                // However, I can pass structured data if I modify backend, OR just pass text for now and warn user.
-
-                // Let's assume for now we just pass text. If image is attached, we can't send it via THIS proxy implementation yet without modifying backend.
-                // But for MVP of "fixing key leak", text chat is priority.
-                // If I want to support image, I need to send { parts: [...] } to backend.
-                // Let's stick to text or update backend later.
-                if (currentImage) {
-                    // console.warn("Image upload not fully supported in Proxy mode yet.");
-                }
-
-                // Call backend
-                // TODO: Pass image to backend if supported
-                const res = await apiService.chatWithAi(historyContents, userMessage.content, 'gemini-3-pro-preview');
-                result = { text: res.text, toolCall: undefined };
+                // Should be caught by validation check above, but fallback
+                throw new Error("Impossible state: No Auth and No Key");
             }
 
             // 4. Handle Tool Calls

@@ -13,7 +13,7 @@ fi
 PROJECT_ID=$CURRENT_PROJECT
 REGION="asia-east1"
 BACKEND_SERVICE="sora-backend"
-FRONTEND_SERVICE="sora-studio"
+FRONTEND_SERVICE="sora-studio-v2"
 BUCKET_NAME="${PROJECT_ID}-assets"
 
 echo "📋 当前项目: $PROJECT_ID"
@@ -69,23 +69,44 @@ gcloud run deploy $BACKEND_SERVICE \
   --set-env-vars JWT_SECRET="$JWT_SECRET",NODE_ENV=production,GCP_PROJECT_ID="$PROJECT_ID",GCS_BUCKET_NAME="$BUCKET_NAME" \
   --memory 512Mi \
   --cpu 1 \
+  --timeout=600 \
   --max-instances 10
 
 # 获取后端 URL
-BACKEND_URL=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --format='value(status.url)')
+# 获取后端 URL (强制指定正确地址，防止解析错误)
+# BACKEND_URL=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --format='value(status.url)')
+BACKEND_URL="https://sora-backend-qul5vdkegq-de.a.run.app"
 echo "✅ 后端部署完成: $BACKEND_URL"
 
 # 部署前端
 echo ""
 echo "🎨 部署前端服务..."
 cd ../frontend
+echo "📂 Current Directory: $(pwd)"
+ls -la
 
-# 注入 Google API Key 到环境变量 (用于构建时)
+
+# 注入环境变量到 .env (供 Docker 构建上下文使用)
 echo "VITE_GOOGLE_API_KEY=" > .env
+echo "VITE_API_URL=$BACKEND_URL" >> .env
+
 
 # 构建并部署前端到 Cloud Run
+# Local build removed as Docker handles it
+# VITE_API_URL="$BACKEND_URL" npm run build
+# rm -rf build_artifacts
+# mv dist build_artifacts
+
+# Build Container Image explicitly with Unique Tag
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+IMAGE_TAG="gcr.io/$PROJECT_ID/$FRONTEND_SERVICE:v$TIMESTAMP"
+echo "🔨 构建 Docker 镜像: $IMAGE_TAG"
+gcloud builds submit --tag $IMAGE_TAG .
+
+# Deploy the Image
+echo "🚀 发布镜像到 Cloud Run..."
 gcloud run deploy $FRONTEND_SERVICE \
-  --source . \
+  --image $IMAGE_TAG \
   --region $REGION \
   --allow-unauthenticated \
   --port 8080 \
@@ -105,7 +126,7 @@ echo ""
 echo "🔄 更新后端 CORS 配置以匹配前端地址..."
 gcloud run services update $BACKEND_SERVICE \
   --region $REGION \
-  --update-env-vars CORS_ORIGIN="$FRONTEND_URL"
+  --update-env-vars CORS_ORIGIN="*"
 
 echo ""
 echo "🎉 部署完成！"

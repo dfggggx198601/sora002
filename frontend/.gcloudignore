@@ -1,0 +1,9 @@
+
+# Default ignores
+.git
+.gitignore
+node_modules/
+.DS_Store
+
+# Explicitly UN-IGNORE crucial build files
+!.env
