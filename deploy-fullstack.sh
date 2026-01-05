@@ -45,7 +45,7 @@ cd backend
 
 # JWT Secret 处理（优先从现有服务读取以保持稳定性）
 echo "🔍 正在检查现有配置..."
-EXISTING_SECRET=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --format='value(spec.template.spec.containers[0].env[?(@.name=="JWT_SECRET")].value)' 2>/dev/null)
+EXISTING_SECRET=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --format='value(spec.template.spec.containers[0].env[?(@.name=="JWT_SECRET")].value)' 2>/dev/null || true)
 
 if [ -n "$EXISTING_SECRET" ]; then
     JWT_SECRET=$EXISTING_SECRET
@@ -73,9 +73,8 @@ gcloud run deploy $BACKEND_SERVICE \
   --max-instances 10
 
 # 获取后端 URL
-# 获取后端 URL (强制指定正确地址，防止解析错误)
-# BACKEND_URL=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --format='value(status.url)')
-BACKEND_URL="https://sora-backend-qul5vdkegq-de.a.run.app"
+BACKEND_URL=$(gcloud run services describe $BACKEND_SERVICE --region $REGION --format='value(status.url)')
+# BACKEND_URL="https://sora-backend-qul5vdkegq-de.a.run.app"
 echo "✅ 后端部署完成: $BACKEND_URL"
 
 # 部署前端

@@ -162,6 +162,21 @@ export class AiController {
             }
 
             if (!imageUrl) {
+                // Enhanced Error Handling for Safety Filters
+                const candidate = data.candidates?.[0];
+                if (candidate && candidate.finishReason !== 'STOP') {
+                    let safetyMsg = `Image generation blocked by safety filters (Reason: ${candidate.finishReason})`;
+
+                    if (candidate.safetyRatings) {
+                        const triggered = candidate.safetyRatings.filter((r: any) => r.probability !== 'NEGLIGIBLE');
+                        if (triggered.length > 0) {
+                            const details = triggered.map((r: any) => `${r.category} (${r.probability})`).join(', ');
+                            safetyMsg += ` - Details: ${details}`;
+                        }
+                    }
+                    throw new Error(safetyMsg);
+                }
+
                 throw new Error('No image data returned from AI (Response parsed successfully but no inlineData found)');
             }
 
@@ -212,7 +227,7 @@ export class AiController {
     static async chat(req: Request, res: Response) {
         let apiKey = '';
         try {
-            const { history, message, model } = req.body;
+            const { history, message, model, image } = req.body;
             // @ts-ignore
             const userId = req.userId;
 
@@ -258,8 +273,19 @@ export class AiController {
 
             const chatUrl = `${cleanBaseUrl}/models/${model || 'gemini-3-pro-preview'}:generateContent?key=${apiKey}`;
 
+            // Construct User Message Parts
+            const userParts: any[] = [{ text: message }];
+            if (image && image.data && image.mimeType) {
+                userParts.push({
+                    inlineData: {
+                        mimeType: image.mimeType,
+                        data: image.data
+                    }
+                });
+            }
+
             const payload = {
-                contents: [...history, { role: 'user', parts: [{ text: message }] }],
+                contents: [...history, { role: 'user', parts: userParts }],
                 generationConfig: { maxOutputTokens: 8000 }
             };
 

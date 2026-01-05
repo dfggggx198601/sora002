@@ -771,8 +771,12 @@ const App = () => {
 
       // 特殊处理：如果浏览器因超时中断请求 (AbortError)，不要标记为失败。
       // 后端仍在运行，让 Auto-Sync 轮询去更新最终状态。
-      if (err.name === 'AbortError' || (err.message && err.message.includes('aborted'))) {
-        console.warn('[Auto-Recovery] Request aborted by browser. Switching to background polling mode.');
+      // 新增：同时处理 504 Gateway Timeout (Nginx超时) 和 SyntaxError (HTML解析错误)
+      const isTimeout = err.message && (err.message.includes('504') || err.message.includes('timeout'));
+      const isSyntaxError = err.name === 'SyntaxError' || (err.message && err.message.includes('Unexpected token'));
+
+      if (err.name === 'AbortError' || err.message?.includes('aborted') || isTimeout || isSyntaxError) {
+        console.warn('[Auto-Recovery] Request timed out or invalid response (likely HTML). Switching to background polling mode.', err.message);
         return;
       }
 

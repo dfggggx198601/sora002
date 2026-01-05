@@ -59,10 +59,20 @@ class ApiService {
       throw new Error('鉴权失效，请重新登录');
     }
 
-    const data = await response.json();
+    const contentType = response.headers.get('content-type');
+    let data;
+
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      // Handle non-JSON response (likely HTML error page from Proxy/Nginx)
+      const text = await response.text();
+      // Throw error with status to allow caller to handle 504 specifically
+      throw new Error(`Request failed with status ${response.status}: ${text.substring(0, 100)}...`);
+    }
 
     if (!response.ok) {
-      throw new Error(data.error || 'Request failed');
+      throw new Error(data.error || `Request failed with status ${response.status}`);
     }
 
     return data;
@@ -222,10 +232,10 @@ class ApiService {
     });
   }
 
-  async chatWithAi(history: any[], message: string, model: string) {
+  async chatWithAi(history: any[], message: string, model: string, image?: { mimeType: string, data: string }) {
     return this.request('/ai/chat', {
       method: 'POST',
-      body: JSON.stringify({ history, message, model })
+      body: JSON.stringify({ history, message, model, image })
     });
   }
 

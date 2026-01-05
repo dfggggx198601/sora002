@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, GenerationTask, GenerationStatus } from '../types';
-import { UploadIcon, SparklesIcon, ImageIcon } from './Icons';
+import { UploadIcon, SparklesIcon, ImageIcon, FileIcon } from './Icons';
 import { apiService } from '../services/apiService';
 import { generateWithChat, prepareGeminiHistory, fileToGenerativePart } from '../services/googleService';
 import ReactMarkdown from 'react-markdown';
@@ -86,12 +86,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, isAuthentic
                 const historyContents = prepareGeminiHistory(realHistory);
 
                 // 2. Prepare Current Message
+                let imageData = undefined;
                 if (currentImage) {
-                    // console.warn("Image upload not fully supported in Proxy mode yet.");
+                    // Extract mimeType AND base64 data from DataURL
+                    const matches = currentImage.preview.match(/^data:(.+?);base64,(.+)$/);
+                    if (matches && matches.length === 3) {
+                        imageData = { mimeType: matches[1], data: matches[2] };
+                    }
                 }
 
                 // Call backend
-                const res = await apiService.chatWithAi(historyContents, userMessage.content, 'gemini-3-pro-preview');
+                const res = await apiService.chatWithAi(historyContents, userMessage.content, 'gemini-3-pro-preview', imageData);
                 result = { text: res.text, toolCall: undefined };
 
             } else if (hasClientKey) {
@@ -216,7 +221,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, isAuthentic
                             {/* Attachments */}
                             {msg.attachments?.map((att, i) => (
                                 <div key={i} className="mb-3 rounded-lg overflow-hidden border border-white/20">
-                                    <img src={att.url} alt="Attachment" className="max-w-[200px] max-h-[200px] object-cover" />
+                                    {att.mimeType?.startsWith('image/') ? (
+                                        <img src={att.url} alt="Attachment" className="max-w-[200px] max-h-[200px] object-cover" />
+                                    ) : (
+                                        <div className="flex items-center gap-3 p-3 bg-zinc-900/50 min-w-[200px]">
+                                            <FileIcon className="w-8 h-8 text-pink-400" />
+                                            <div className="flex flex-col overflow-hidden">
+                                                <span className="text-sm font-medium text-zinc-200 truncate max-w-[150px]">
+                                                    {att.mimeType === 'application/pdf' ? 'Document.pdf' : 'File'}
+                                                </span>
+                                                <span className="text-xs text-zinc-500 uppercase">{att.mimeType?.split('/')[1] || 'FILE'}</span>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
 
@@ -269,7 +286,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, isAuthentic
             <div className="p-4 bg-zinc-900 border-t border-zinc-800">
                 {attachedImage && (
                     <div className="mb-3 inline-block relative group">
-                        <img src={attachedImage.preview} alt="Preview" className="h-16 w-16 object-cover rounded-lg border border-zinc-700" />
+                        {attachedImage.file.type.startsWith('image/') ? (
+                            <img src={attachedImage.preview} alt="Preview" className="h-16 w-16 object-cover rounded-lg border border-zinc-700" />
+                        ) : (
+                            <div className="h-16 w-16 flex items-center justify-center bg-zinc-800 rounded-lg border border-zinc-700">
+                                <FileIcon className="w-8 h-8 text-zinc-400" />
+                            </div>
+                        )}
                         <button
                             onClick={() => setAttachedImage(null)}
                             className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
@@ -291,7 +314,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ task, apiKey, isAuthentic
                         type="file"
                         ref={fileInputRef}
                         className="hidden"
-                        accept="image/*"
+                        accept="image/*,application/pdf"
                         onChange={handleImageSelect}
                     />
 
