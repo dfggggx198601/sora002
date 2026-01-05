@@ -118,6 +118,8 @@ export interface SystemSettings {
     googleKeys: string[];
     baseUrl?: string;
     apiKey?: string;
+    soraBaseUrl?: string;
+    soraApiKey?: string;
   };
   updatedAt: string;
 }

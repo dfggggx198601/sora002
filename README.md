@@ -1,181 +1,88 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# GenVideo Studio (Sora/Gemini) - System Documentation
 
-# Sora 创意工坊 - AI 视频&图片生成平台
+## 1. 项目概述 (Project Overview)
+GenVideo Studio 是一个基于 Google Gemini 和 Sora 模型的高级视频/图片生成平台。
+本项目采用 **混合架构 (Hybrid Architecture)**：核心计算与服务托管在 **Google Cloud Run** (Serverless)，而流量入口通过一台 **高性能 VPS 代理服务器** 进行加速，以解决直连 Google Cloud 的速度和网络限制问题。
 
-一个功能完整的 AI 创意生成应用，支持视频和图片生成，包含数据持久化、队列管理和配额控制。
+## 2. 系统架构 (Architecture)
 
-## ✨ 核心功能
-
-### 🎬 视频生成
-- **文生视频**: 输入提示词直接生成视频
-- **图生视频**: 上传参考图片生成视频
-- **AI 辅助**: 使用 Gemini 3 Pro 自动生成参考图
-- **多模型支持**:
-  - Sora 兼容 API (横屏/竖屏，10秒/15秒)
-  - Google Veo 3.1 Fast (官方SDK)
-
-### 🖼️ 图片生成
-- 使用 Gemini 3 Pro Image Preview 生成高质量图片
-- 支持自定义 Base URL（中转/代理）
-
-### 💾 数据持久化
-- **IndexedDB 存储**: 所有任务历史自动保存
-- 刷新页面不丢失数据
-- 支持清空和单个删除
-
-### 🔄 队列管理
-- **智能队列**: 自动管理多个生成任务
-- **并发控制**: 默认最多3个任务同时执行
-- **实时状态**: 显示队列长度和进度
-
-### 📊 配额管理
-- **每日限额**: 
-  - 视频生成: 10个/天
-  - 图片生成: 50个/天
-- **自动重置**: 每24小时自动重置配额
-- **实时显示**: 侧边栏显示剩余配额
-
-## 🚀 部署到 Cloud Run
-
-### 在线访问
-```
-https://sora-studio-718161097168.asia-east1.run.app
+### 流量链路 (Traffic Flow)
+```mermaid
+graph LR
+    User[用户浏览器] -->|1. 访问 http://ai.440700.xyz| Mailcow[VPS Port 80 (Mailcow Nginx)]
+    Mailcow -->|2. 本地转发 (Proxy Pass)| Proxy[VPS Port 8000 (Custom Nginx)]
+    Proxy -->|3. 加速通道 (HTTP/2)| CloudRun[Google Cloud Run (Asia-East1)]
+    CloudRun -->|4. 调用| GoogleAPI[Google Gemini/Sora API]
+    CloudRun -->|5. 存储/读取| GCS[Google Cloud Storage]
 ```
 
-### 本地运行
-
-**前置要求**: Node.js
-
-1. 安装依赖:
-   ```bash
-   npm install
-   ```
-
-2. 配置 API Key (可选):
-   创建 `.env.local` 文件:
-   ```
-   GEMINI_API_KEY=your_api_key_here
-   ```
-
-3. 启动开发服务器:
-   ```bash
-   npm run dev
-   ```
-
-### Cloud Run 部署
-
-```bash
-# 登录 Google Cloud
-gcloud auth login
-
-# 设置项目
-gcloud config set project YOUR_PROJECT_ID
-
-# 部署
-./deploy.sh
-```
-
-## 📖 使用说明
-
-1. **配置 API Key**: 
-   - 点击右上角"连接 Google 账号"或"设置"图标
-   - 粘贴你的 Gemini API Key
-   - 获取 API Key: https://aistudio.google.com/app/apikey
-
-2. **生成视频**:
-   - 选择"视频生成"标签页
-   - 输入提示词或上传图片
-   - 选择模型（Sora 或 Veo）
-   - 点击"开始生成视频"
-
-3. **生成图片**:
-   - 选择"图片生成"标签页
-   - 输入图片描述
-   - 点击"开始生成图片"
-
-4. **查看历史**:
-   - 左侧边栏显示所有任务
-   - 点击任务查看详情
-   - 支持下载和删除
-
-## 🛠️ 技术栈
-
-- **前端**: React 18 + TypeScript 5
-- **构建**: Vite 5
-- **样式**: TailwindCSS 3
-- **AI SDK**: @google/genai
-- **存储**: IndexedDB + Google Cloud Firestore
-- **部署**: Docker + Google Cloud Run
-
-## 📦 项目结构
-
-```
-├── components/          # React 组件
-│   └── Icons.tsx       # SVG 图标
-├── services/           # 核心服务
-│   ├── customService.ts   # Sora API 服务
-│   ├── googleService.ts   # Gemini 图片服务
-│   ├── veoService.ts      # Veo 视频服务
-│   ├── dbService.ts       # IndexedDB 服务
-│   ├── queueService.ts    # 队列管理
-│   └── quotaService.ts    # 配额管理
-├── App.tsx            # 主应用
-├── types.ts           # 类型定义
-├── constants.ts       # 配置常量
-└── Dockerfile         # 容器配置
-```
-
-## 🔧 配置说明
-
-### 修改每日配额
-
-编辑 `services/quotaService.ts`:
-
-```typescript
-const DEFAULT_QUOTA: QuotaConfig = {
-  dailyVideoLimit: 10,    // 修改视频配额
-  dailyImageLimit: 50,    // 修改图片配额
-  maxConcurrentTasks: 3,  // 修改并发数
-};
-```
-
-### 自定义 Sora API
-
-编辑 `constants.ts`:
-
-```typescript
-export const DEFAULT_CUSTOM_CONFIG: CustomApiConfig = {
-  baseUrl: "your-api-url",
-  apiKey: "your-api-key",
-  endpointPath: "/chat/completions"
-};
-```
-
-## 🎨 特性亮点
-
-- ✅ 现代化 UI/UX 设计
-- ✅ 暗色主题
-- ✅ 响应式布局（支持移动端）
-- ✅ 实时状态更新
-- ✅ 流式响应处理
-- ✅ 错误处理和重试
-- ✅ 数据持久化
-- ✅ 智能队列管理
-- ✅ 配额控制
-
-## 📄 License
-
-MIT License
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
+### 关键组件
+1.  **Frontend (React/Vite)**: 用户界面，自适应相对路径 `/api` 以支持代理。
+2.  **Backend (Node/Express)**: 处理业务逻辑、鉴权、支付、以及 **AI 媒体代理 (Media Proxy)**。
+3.  **Proxy Server (Nginx)**: 部署在 `141.147.147.229`。
+    *   **Port 80**: 由 Mailcow 占用，但已配置转发规则 (`ai_proxy.conf`) 将 `ai.440700.xyz` 转发给 Port 8000。
+    *   **Port 8000**: 我们的核心加速代理，负责将流量清洗并转发给 Google Cloud Run。
 
 ---
 
-**部署信息**:
-- 项目: genvideo-sora
-- 区域: asia-east1 (台湾)
-- 账号: xian20250131@gmail.com
+## 3. 核心技术亮点 (Key Features)
+
+### 🚀 全链路代理加速 (Full Proxy Coverage)
+为了解决 "加载慢" 和 "Network Error" 问题，系统强制所有流量走代理：
+*   **API 请求**: 前端使用相对路径 `/api`，自动经由 VPS 转发。
+*   **视频播放**: 后端生成视频时，返回相对路径 `/api/ai/proxy?url=...`，确保视频流也走 VPS 加速 (支持断点续传/拖拽)。
+*   **图片加速**: 后端生成的图片 URL 会自动被包装为 `/api/ai/proxy?url=GCS_URL`，解决 Google 存储链接加载慢和 CORS 跨域问题。
+
+### 💾 状态持久化与防丢失 (State Persistence)
+*   **问题**: 早期版本刷新页面后任务变回 "生成中"。
+*   **解决方案**: 图片生成逻辑已移至后端 (`AiController`)。
+    *   后端直接将 Base64 图片上传到 Google Cloud Storage (GCS)。
+    *   后端直接更新数据库状态为 `COMPLETED`。
+    *   前端仅负责展示，不再承担上传大文件的风险。
+
+### 🛡️ 稳定性与错误处理
+*   **超时优化**: Nginx 代理超时已设置为 **600秒 (10分钟)**，防止长视频生成时出现 504 Gateway Timeout。
+*   **CORS 修复**: 后端 `server.ts` 对 CORS Origin 做了通配符处理，允许代理服务器 IP 访问。
+*   **双重提交防护**: 前端增加 `isSubmitting` 锁，防止用户重复点击生成导致扣费异常。
+
+---
+
+## 4. 部署指南 (Deployment Guide)
+
+### A. 全栈部署 (Cloud Run)
+一键部署前端和后端代码到 Google Cloud Run：
+```bash
+./deploy-fullstack.sh
+```
+
+### B. 代理服务器部署 (VPS)
+如果需要更新代理配置 (Nginx)：
+```bash
+# 自动通过 SSH 部署到 141.147.147.229:8000
+expect deploy_proxy_8000.exp
+```
+*配置文件位于: `proxy_install.sh`*
+
+### C. 域名转发配置 (Mailcow Integration)
+如果需要修改 80 端口的转发规则 (例如绑定新域名)：
+1. 修改 `sora_mailcow_proxy.conf`。
+2. 运行部署脚本：
+```bash
+expect deploy_mailcow_proxy.exp
+```
+*这会将配置上传到 `/opt/mailcow-dockerized/data/conf/nginx/` 并重载 Mailcow。*
+
+---
+
+## 5. 常用命令与排查
+
+*   **查看远程 Docker 状态**: `ssh root@141... "docker ps | grep 8000"`
+*   **测试代理连通性**: `curl -v http://141.147.147.229:8000/api/health`
+*   **Git 提交**: `git add . && git commit -m "update" && git push`
+
+## 6. 版本历史
+*   **v0.45**: 完整代理支持，CORS 修复。
+*   **Rev 35-39**: 图片持久化修复，GCS 代理加速优化，域名端口转发支持.
+
+---
+*Created by Antigravity Agent*

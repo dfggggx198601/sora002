@@ -83,6 +83,8 @@ export class AiController {
             const { prompt, model } = req.body;
             // @ts-ignore
             const userId = req.userId;
+            // @ts-ignore
+            const currentTaskId = req.body.taskId; // Extract taskId from body
 
             // 1. Check Quota
             if (userId) {
@@ -163,10 +165,46 @@ export class AiController {
                 throw new Error('No image data returned from AI (Response parsed successfully but no inlineData found)');
             }
 
-            res.json({ imageUrl });
+            // --- PERSISTENCE: Save to GCS if taskId is present ---
+            if (currentTaskId) {
+                // Import StorageService (Dynamic or Top)
+                // Assuming it's imported at top
+                const { StorageService } = require('../utils/storage');
+
+                // Upload to GCS
+                console.log(`[AI Controller] Uploading Image Task ${currentTaskId} to Storage...`);
+                // Upload Base64 to GCS
+                const gcsUrl = await StorageService.uploadFromBase64(imageUrl, 'images');
+
+                // Update Task
+                const proxyUrl = `/api/ai/proxy?url=${encodeURIComponent(gcsUrl)}`; // Wrap in Proxy for speed
+                await TaskModel.update(currentTaskId, {
+                    status: 'COMPLETED',
+                    imageUrl: proxyUrl,
+                    completedAt: new Date()
+                });
+
+                console.log(`[AI Controller] Updated Task ${currentTaskId} to COMPLETED (Image Stored & Proxied)`);
+
+                // Return the GCS URL to frontend (Frontend handles logic, or usage of returned value)
+                // Actually return Proxy Url to be consistent
+                res.json({ imageUrl: proxyUrl });
+            } else {
+                // Guest mode: return base64
+                res.json({ imageUrl });
+            }
 
         } catch (error: any) {
             console.error('AI Generate Image Error:', error);
+            // @ts-ignore
+            const currentTaskId = req.body.taskId;
+            if (currentTaskId) {
+                await TaskModel.update(currentTaskId, {
+                    status: 'FAILED',
+                    error: error.message || 'Image Generation failed',
+                    completedAt: new Date()
+                });
+            }
             res.status(500).json({ error: error.message || 'Generation failed' });
         }
     }
@@ -360,13 +398,20 @@ export class AiController {
 
             // CASE B: SORA / CUSTOM (Sora2API)
             else {
-                // Use Hardcoded Fallback for now as user relies on 'constants.ts' default
-                // TODO: Add to System Settings later
-                const SORA_BASE_URL = 'https://sora2api-584967513363.us-west1.run.app/v1';
-                const SORA_API_KEY = 'han1234';
-                // Note: In production, these should be env vars or settings.
+                // Use System Settings (or defaults within SettingsModel)
+                const SORA_BASE_URL = settings.aiConfig?.soraBaseUrl || 'https://sora2api-584967513363.us-west1.run.app/v1';
+                const SORA_API_KEY = settings.aiConfig?.soraApiKey || 'han1234';
 
-                const endpoint = `${SORA_BASE_URL}/chat/completions`;
+                // Clean URL: Remove trailing slash
+                let cleanSoraUrl = SORA_BASE_URL.replace(/\/$/, '');
+
+                // Robustness: If user accidentally pasted the FULL endpoint (Base + /chat/completions), strip it so we don't double append.
+                if (cleanSoraUrl.endsWith('/chat/completions')) {
+                    cleanSoraUrl = cleanSoraUrl.replace(/\/chat\/completions$/, '');
+                }
+
+                // Construct Endpoint
+                const endpoint = `${cleanSoraUrl}/chat/completions`;
 
                 // Construct Payload (OpenAI Compatible)
                 const payload = {
@@ -388,9 +433,16 @@ export class AiController {
 
                 if (!response.ok) {
                     const errText = await response.text();
-                    console.error('[AI Proxy-Sora] API Error:', response.status, errText);
-                    throw new Error(`Sora API Error: ${response.status} - ${errText}`);
+                    // Log HTML error but don't send full HTML to frontend if it's too long
+                    console.error(`[AI Proxy-Sora] API Error at ${endpoint}:`, response.status, errText);
+
+                    // Simple logic: if HTML, just say "HTML Error Page", otherwise show text.
+                    const isHtml = errText.trim().startsWith('<');
+                    const safeMsg = isHtml ? "Upstream Server returned HTML Error (Check Admin URL config)" : errText.substring(0, 200);
+
+                    throw new Error(`Sora API Error (${response.status}) requesting ${endpoint}: ${safeMsg}`);
                 }
+
 
                 if (!response.body) throw new Error("No response body for stream");
 

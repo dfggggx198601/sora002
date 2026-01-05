@@ -15,10 +15,26 @@ export const generateWithCustomApi = async (
   genConfig: GenerationConfig,
   apiConfig: CustomApiConfig
 ): Promise<string> => {
-  // Ensure Base URL doesn't have trailing slash and path starts with slash
-  const baseUrl = apiConfig.baseUrl.replace(/\/$/, '');
+  // Ensure Base URL doesn't have trailing slash
+  let cleanBaseUrl = apiConfig.baseUrl.replace(/\/$/, '');
+
+  // Robustness: strip /chat/completions if user accidentally included it
+  if (cleanBaseUrl.endsWith('/chat/completions')) {
+    cleanBaseUrl = cleanBaseUrl.replace(/\/chat\/completions$/, '');
+  }
+
   const path = apiConfig.endpointPath.startsWith('/') ? apiConfig.endpointPath : `/${apiConfig.endpointPath}`;
-  const endpoint = `${baseUrl}${path}`;
+
+  // Robustness: For OpenAI-compatible endpoints, ensure /v1 exists
+  // Many users forget to add /v1 to the base URL
+  if (path === '/chat/completions' && !cleanBaseUrl.endsWith('/v1')) {
+    const isV1Beta = cleanBaseUrl.endsWith('/v1beta'); // Don't break Gemini
+    if (!isV1Beta) {
+      cleanBaseUrl = `${cleanBaseUrl}/v1`;
+    }
+  }
+
+  const endpoint = `${cleanBaseUrl}${path}`;
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -82,6 +98,12 @@ export const generateWithCustomApi = async (
     if (!response.ok) {
       const errorText = await response.text();
       console.error(`[CustomService] API Error: ${response.status} - ${errorText}`);
+
+      // Handle HTML Errors (Nginx 404/405/500)
+      if (errorText.trim().startsWith('<')) {
+        throw new Error(`API Error (${response.status}): Upstream Server returned HTML. Please check your Sora Base URL configuration.`);
+      }
+
       try {
         const errorJson = JSON.parse(errorText);
         if (errorJson.error && errorJson.error.message) {

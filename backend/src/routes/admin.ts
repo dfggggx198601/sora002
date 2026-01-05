@@ -25,7 +25,7 @@ router.get('/orders', AdminController.getOrders);
 router.put('/orders/:orderId/verify', AdminController.verifyOrder);
 
 // 系统设置
-router.get('/settings', AdminController.getSettings);
+router.get('/settings', AdminController.getAdminSettings);
 router.put('/settings', AdminController.updateSettings);
 
 export default router;

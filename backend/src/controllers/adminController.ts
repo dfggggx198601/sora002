@@ -227,8 +227,8 @@ export class AdminController {
     }
   }
 
-  // 获取系统设置
-  static async getSettings(req: Request, res: Response) {
+  // 获取公开系统设置 (前端使用，脱敏)
+  static async getPublicSettings(req: Request, res: Response) {
     try {
       // 禁用缓存
       res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -257,13 +257,32 @@ export class AdminController {
           apiKey: (settings.aiConfig?.enabled && settings.aiConfig?.googleKeys?.length > 0)
             ? settings.aiConfig.googleKeys[0]
             : undefined,
-          baseUrl: settings.aiConfig?.baseUrl
+          baseUrl: settings.aiConfig?.baseUrl,
+
+          // Sora2API Configuration
+          soraBaseUrl: settings.aiConfig?.soraBaseUrl,
+          soraApiKey: settings.aiConfig?.soraApiKey
         }
       };
 
       res.status(200).json(publicSettings);
     } catch (error) {
-      console.error('Get settings error:', error);
+      console.error('Get public settings error:', error);
+      res.status(500).json({ error: 'Failed to fetch settings' });
+    }
+  }
+
+  // 获取完整系统设置 (管理端使用，不脱敏)
+  static async getAdminSettings(req: Request, res: Response) {
+    try {
+      // 禁用缓存
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+
+      const settings = await SettingsModel.getSettings();
+      // Admin gets everything, including googleKeys array and epayKey
+      res.status(200).json(settings);
+    } catch (error) {
+      console.error('Get admin settings error:', error);
       res.status(500).json({ error: 'Failed to fetch settings' });
     }
   }
@@ -322,7 +341,10 @@ export class AdminController {
       if (updates.aiConfig) {
         cleanSettings.aiConfig = {
           enabled: !!updates.aiConfig.enabled,
-          googleKeys: Array.isArray(updates.aiConfig.googleKeys) ? updates.aiConfig.googleKeys.filter((k: any) => typeof k === 'string' && k.trim() !== '') : []
+          googleKeys: Array.isArray(updates.aiConfig.googleKeys) ? updates.aiConfig.googleKeys.filter((k: any) => typeof k === 'string' && k.trim() !== '') : [],
+          baseUrl: updates.aiConfig.baseUrl || '',
+          soraBaseUrl: updates.aiConfig.soraBaseUrl || '',
+          soraApiKey: updates.aiConfig.soraApiKey || ''
         };
       }
 

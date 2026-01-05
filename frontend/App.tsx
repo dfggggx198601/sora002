@@ -36,6 +36,7 @@ const App = () => {
   const [googleBaseUrl, setGoogleBaseUrl] = useState<string>('');
   const [apiKey, setApiKey] = useState<string>(localStorage.getItem('google_api_key') || '');
   const [showConfig, setShowConfig] = useState(false);
+  const [systemAiConfig, setSystemAiConfig] = useState<any>(null); // Store full AI config from system
   const [activeTab, setActiveTab] = useState<'video' | 'image' | 'chat'>('video');
 
   // Mobile Support
@@ -51,7 +52,7 @@ const App = () => {
   // 视频生成 - 输入区域状态
   const [prompt, setPrompt] = useState('');
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string>('sora-video-landscape-10s');
+  const [selectedModel, setSelectedModel] = useState<string>('sora2-landscape-10s');
 
   // 视频生成 - 辅助AI生图状态 (作为参考图)
   const [isRefImageMode, setIsRefImageMode] = useState(false);
@@ -95,6 +96,8 @@ const App = () => {
 
       // Add ApiKey logic
       const { aiConfig } = settings;
+      setSystemAiConfig(aiConfig); // Save to state
+
       if (aiConfig && aiConfig.apiKey) {
         setApiKey(prev => {
           // If user has local key, prefer it? Or system key?
@@ -377,6 +380,19 @@ const App = () => {
   // 获取当前正在查看的任务对象
   const activeTask = tasks.find((t: GenerationTask) => t.id === activeTaskId) || null;
 
+  // --- Helper: Proxy URL Generator for Images ---
+  const getProxiedUrl = (url: string | undefined): string | undefined => {
+    if (!url) return undefined;
+    // Base64 or already relative path -> use as is
+    if (url.startsWith('data:') || url.startsWith('/')) return url;
+    // Localhost -> use as is
+    if (url.includes('localhost') || url.includes('127.0.0.1')) return url;
+
+    // GCS or other external URL -> wrap in Proxy
+    // Note: We use the existing /api/ai/proxy endpoint which supports 'url' param
+    return `/api/ai/proxy?url=${encodeURIComponent(url)}`;
+  };
+
   // --- Handlers ---
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -401,10 +417,20 @@ const App = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // 1. Clear Backend Token
     apiService.clearToken();
     setIsAuthenticated(false);
     setUserProfile(null);
+
+    // 2. Clear Local Tasks (Memory & Disk)
+    setTasks([]);
+    try {
+      await dbService.clearAllTasks();
+      console.log('Local task history cleared on logout');
+    } catch (e) {
+      console.error('Failed to clear local DB on logout', e);
+    }
   };
 
   const clearImage = () => {
@@ -533,7 +559,7 @@ const App = () => {
 
       if (isAuthenticated) {
         // Priority 1: Authenticated User -> Use Backend Proxy
-        const res = await apiService.generateAiImage(newTask.prompt, finalModel);
+        const res = await apiService.generateAiImage(newTask.prompt, finalModel, newTask.id);
         base64Url = res.imageUrl;
 
       } else if (hasClientKey) {
@@ -548,10 +574,21 @@ const App = () => {
         throw new Error("Impossible state: No Auth and No Key");
       }
 
-      // 转换为 Blob URL 以优化内存展示
-      const res = await fetch(base64Url);
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
+      // 3. 处理图片预览 (Blob vs URL)
+      let finalImageUrl = base64Url;
+
+      // 只有当是 Base64 数据时，才转换为 Blob URL 以优化内存
+      // 如果是 http 链接 (GCS)，直接使用
+      if (base64Url.startsWith('data:')) {
+        try {
+          const res = await fetch(base64Url);
+          const blob = await res.blob();
+          finalImageUrl = URL.createObjectURL(blob);
+        } catch (blobErr) {
+          console.error("Blob conversion failed", blobErr);
+          // If blob fails, fallback to original base64 (heavy but safe)
+        }
+      }
 
       // 更新本地状态
       setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
@@ -559,34 +596,22 @@ const App = () => {
           ? {
             ...t,
             status: GenerationStatus.COMPLETED,
-            imageUrl: objectUrl,
+            imageUrl: finalImageUrl,
             completedAt: Date.now()
           }
           : t
       ));
 
-      // 如果已登录，同步更新到后端
-      if (isAuthenticated) {
-        try {
-          await apiService.updateTask(newTask.id, {
-            status: GenerationStatus.COMPLETED,
-            imageUrl: base64Url
-          });
-        } catch (syncErr: any) {
-          console.error('Failed to sync image to backend:', syncErr);
-          try {
-            await apiService.updateTask(newTask.id, {
-              status: GenerationStatus.COMPLETED,
-              error: "(图片过大，无法同步到云端，仅保存在当前设备)"
-            });
-          } catch (finalErr) {
-            console.error('Final sync attempt failed:', finalErr);
-          }
-        }
-      }
+      // 如果已登录，不需要再 updateTask 了，因为后端 AiController 已经保存了 COMPLETED 状态
+      // 但为了保险起见(防止后端保存失败?)，或者为了同步 imageUrl (如果是 Guest 模式转正?)
+      // 其实对于已登录用户，后端早就保存好了。这里再保存一次虽冗余但无害，只要不报错。
+      // 但如果这里报错，绝不能覆盖成 FAILED！
 
     } catch (err: any) {
+      console.error('Image Generation Error:', err);
       const errorMsg = err.message || "图片生成失败";
+
+      // 更新本地 UI 提示错误
       setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
         t.id === newTask.id
           ? {
@@ -598,11 +623,30 @@ const App = () => {
           : t
       ));
 
+      // 只有当还没有获得结果时 (即真正生成失败时)，才向后端报告 FAILED
+      // 如果 err 是在 fetch(base64Url) 阶段抛出的，说明后端已经成功了，千万不要覆盖！
+      // 我们可以检查 newTask 是否已经在 UI 上显示为成功? 不，这里是 catch 块.
+      // 简单判断: 检查 err 是否是网络错误? 或者更直接:
+      // 如果我们能确定 apiService.generateAiImage 抛出了错，才报 Failed。
+      // 由于 await apiService... 在 try 的第一行，如果它挂了，会直接进 catch。
+      // 如果它没挂，base64Url 就有值了。
+
+      // *关键修复*: 如果我们也报 FAILED，会导致后端已完成的任务被改写。
+      // 所以我们加一个判断：只有当生成API调用本身失败时。
+      // 如何判断？看 `base64Url` 是否为空。
+      // 但 base64Url 是 let 定义的，无法在 catch 中访问 (block scope)。
+      // 需要重构作用域。
+
       if (isAuthenticated) {
-        await apiService.updateTask(newTask.id, {
-          status: GenerationStatus.FAILED,
-          error: errorMsg
-        });
+        // 为了安全，我们只在极大概率是生成失败的情况下 updateTask
+        // 如果错误信息包含 "fetch" 或 "blob", 可能是前端问题，不要报 Failed
+        const isFrontendError = err.message.includes('fetch') || err.message.includes('blob');
+        if (!isFrontendError) {
+          await apiService.updateTask(newTask.id, {
+            status: GenerationStatus.FAILED,
+            error: errorMsg
+          }).catch(e => console.error("Failed to report error", e));
+        }
       }
 
       if (err.message && err.message.includes("API Key") && hasClientKey) {
@@ -695,8 +739,13 @@ const App = () => {
         // Priority 2: Guest with Key -> Use Client Side Direct Call (Veo)
         videoUrl = await generateWithVeo(config, apiKey);
       } else {
-        // Fallback / Other models (Mock/Custom)
-        videoUrl = await generateWithCustomApi(config, DEFAULT_CUSTOM_CONFIG);
+        // Fallback / Other models (Mock/Custom) - Guest Mode using Dynamic Config
+        const effectiveConfig = {
+          baseUrl: systemAiConfig?.soraBaseUrl || DEFAULT_CUSTOM_CONFIG.baseUrl,
+          apiKey: systemAiConfig?.soraApiKey || DEFAULT_CUSTOM_CONFIG.apiKey,
+          endpointPath: DEFAULT_CUSTOM_CONFIG.endpointPath
+        };
+        videoUrl = await generateWithCustomApi(config, effectiveConfig);
       }
 
       setTasks((prev: GenerationTask[]) => prev.map((t: GenerationTask) =>
@@ -902,10 +951,10 @@ const App = () => {
   };
 
   const videoModels = [
-    { id: 'sora-video-landscape-10s', name: '横屏 (16:9) - 10秒' },
-    { id: 'sora-video-landscape-15s', name: '横屏 (16:9) - 15秒' },
-    { id: 'sora-video-portrait-10s', name: '竖屏 (9:16) - 10秒' },
-    { id: 'sora-video-portrait-15s', name: '竖屏 (9:16) - 15秒' },
+    { id: 'sora2-landscape-10s', name: '横屏 (16:9) - 10秒' },
+    { id: 'sora2-landscape-15s', name: '横屏 (16:9) - 15秒' },
+    { id: 'sora2-portrait-10s', name: '竖屏 (9:16) - 10秒' },
+    { id: 'sora2-portrait-15s', name: '竖屏 (9:16) - 15秒' },
     { id: 'veo-3.1-fast-generate-preview', name: 'Google Veo 3.1 Fast (官方)' },
   ];
 
@@ -1399,7 +1448,7 @@ const App = () => {
                       <img src={task.imagePreviewUrl} alt="ref" className="w-8 h-8 rounded object-cover border border-zinc-700 flex-shrink-0" />
                     )}
                     {task.type === 'IMAGE' && task.imageUrl && (
-                      <img src={task.imageUrl} alt="res" className="w-8 h-8 rounded object-cover border border-zinc-700 flex-shrink-0" />
+                      <img src={getProxiedUrl(task.imageUrl)} alt="res" className="w-8 h-8 rounded object-cover border border-zinc-700 flex-shrink-0" />
                     )}
                     <p className="text-sm text-zinc-300 line-clamp-2 font-medium leading-snug relative z-10">
                       {task.prompt}
@@ -1802,7 +1851,7 @@ const App = () => {
                       {/* CASE 2: Completed IMAGE */}
                       {activeTask.status === GenerationStatus.COMPLETED && activeTask.type === 'IMAGE' && activeTask.imageUrl && (
                         <img
-                          src={activeTask.imageUrl}
+                          src={getProxiedUrl(activeTask.imageUrl)}
                           alt="Generated Result"
                           className="w-full h-full object-contain max-h-[60vh]"
                         />

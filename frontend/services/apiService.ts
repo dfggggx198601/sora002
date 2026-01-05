@@ -185,6 +185,10 @@ class ApiService {
     return this.request('/settings');
   }
 
+  async getAdminSettings() {
+    return this.request('/admin/settings');
+  }
+
   async updateAdminSettings(settings: any) {
     return this.request('/admin/settings', {
       method: 'PUT',
@@ -204,10 +208,10 @@ class ApiService {
   }
 
   // AI 代理服务
-  async generateAiImage(prompt: string, model: string) {
+  async generateAiImage(prompt: string, model: string, taskId?: string) {
     return this.request('/ai/image', {
       method: 'POST',
-      body: JSON.stringify({ prompt, model })
+      body: JSON.stringify({ prompt, model, taskId })
     });
   }
 

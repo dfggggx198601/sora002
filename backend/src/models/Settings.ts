@@ -36,6 +36,8 @@ export interface ISettings {
         googleKeys: string[];  // Array of API Keys for rotation
         baseUrl?: string;      // Custom API Endpoint
         enabled: boolean;
+        soraBaseUrl?: string; // Sora2API Endpoint
+        soraApiKey?: string;  // Sora2API Key
     };
     updatedAt: Date;
 }
@@ -82,7 +84,9 @@ export class SettingsModel {
             aiConfig: {
                 googleKeys: data.aiConfig?.googleKeys || [],
                 baseUrl: data.aiConfig?.baseUrl || '',
-                enabled: data.aiConfig?.enabled || false
+                enabled: data.aiConfig?.enabled || false,
+                soraBaseUrl: data.aiConfig?.soraBaseUrl || 'https://sora2api-584967513363.us-west1.run.app/v1',
+                soraApiKey: data.aiConfig?.soraApiKey || 'han1234'
             }
         };
     }
@@ -120,7 +124,9 @@ export class SettingsModel {
             aiConfig: {
                 googleKeys: settings.aiConfig?.googleKeys || currentData.aiConfig?.googleKeys || [],
                 baseUrl: settings.aiConfig?.baseUrl !== undefined ? settings.aiConfig.baseUrl : (currentData.aiConfig?.baseUrl || ''),
-                enabled: settings.aiConfig?.enabled !== undefined ? settings.aiConfig.enabled : (currentData.aiConfig?.enabled || false)
+                enabled: settings.aiConfig?.enabled !== undefined ? settings.aiConfig.enabled : (currentData.aiConfig?.enabled || false),
+                soraBaseUrl: settings.aiConfig?.soraBaseUrl !== undefined ? settings.aiConfig.soraBaseUrl : (currentData.aiConfig?.soraBaseUrl || 'https://sora2api-584967513363.us-west1.run.app/v1'),
+                soraApiKey: settings.aiConfig?.soraApiKey !== undefined ? settings.aiConfig.soraApiKey : (currentData.aiConfig?.soraApiKey || 'han1234')
             },
             updatedAt: new Date()
         };

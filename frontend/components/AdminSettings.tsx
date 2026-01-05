@@ -20,7 +20,7 @@ export const AdminSettings = () => {
     const loadSettings = async () => {
         try {
             setLoading(true);
-            const data = await apiService.getSystemSettings();
+            const data = await apiService.getAdminSettings();
             setSettings(data);
         } catch (error) {
             console.error('Failed to load settings:', error);
@@ -454,7 +454,7 @@ export const AdminSettings = () => {
                         </div>
 
                         <div className="pt-4 border-t border-zinc-900">
-                            <label className="block text-sm text-zinc-400 mb-2">API Base URL (可选)</label>
+                            <label className="block text-sm text-zinc-400 mb-2">Google API Base URL (可选)</label>
                             <input
                                 type="text"
                                 value={settings.aiConfig?.baseUrl || ''}
@@ -468,6 +468,38 @@ export const AdminSettings = () => {
                             <p className="text-xs text-zinc-500 mt-1">
                                 如果您使用第三方中转服务（如 OneAPI），请在此填写中转地址。
                             </p>
+                        </div>
+
+                        <div className="pt-4 border-t border-zinc-900">
+                            <h4 className="text-md font-medium text-zinc-300 mb-3">Sora2API 配置 (视频生成)</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm text-zinc-400 mb-2">Sora Base URL</label>
+                                    <input
+                                        type="text"
+                                        value={settings.aiConfig?.soraBaseUrl || ''}
+                                        onChange={(e) => setSettings({
+                                            ...settings,
+                                            aiConfig: { ...settings.aiConfig!, soraBaseUrl: e.target.value }
+                                        })}
+                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-zinc-300 font-mono text-sm outline-none"
+                                        placeholder="https://sora2api.../v1"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm text-zinc-400 mb-2">Sora API Key</label>
+                                    <input
+                                        type="text"
+                                        value={settings.aiConfig?.soraApiKey || ''}
+                                        onChange={(e) => setSettings({
+                                            ...settings,
+                                            aiConfig: { ...settings.aiConfig!, soraApiKey: e.target.value }
+                                        })}
+                                        className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2 text-zinc-300 font-mono text-sm outline-none"
+                                        placeholder="han..."
+                                    />
+                                </div>
+                            </div>
                         </div>
                     </div>
                 )}

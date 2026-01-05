@@ -1,8 +1,8 @@
 import { CustomApiConfig } from "./types";
 
 export const DEFAULT_CUSTOM_CONFIG: CustomApiConfig = {
-  baseUrl: "https://sora2api-584967513363.us-west1.run.app/v1",
-  apiKey: "han1234",
+  baseUrl: "", // 动态从 System Settings 获取
+  apiKey: "",  // 动态从 System Settings 获取
   endpointPath: "/chat/completions"
 };
 
